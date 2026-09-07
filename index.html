@@ -25,6 +25,7 @@
     <main class="app-shell" aria-live="polite">
       <section class="view active" id="today-view" aria-labelledby="today-title"></section>
       <section class="view" id="plan-view" aria-labelledby="plan-title"></section>
+      <section class="view" id="discovery-view" aria-labelledby="discovery-title"></section>
       <section class="view map-view" id="map-view" aria-label="แผนที่และรายการสถานที่"></section>
       <section class="view" id="saved-view" aria-labelledby="saved-title"></section>
       <section class="view" id="more-view" aria-labelledby="more-title"></section>
@@ -39,6 +40,7 @@
       <nav class="bottom-nav" aria-label="เมนูหลัก">
         <button class="active" data-tab="today"><span>⌂</span><b>วันนี้</b></button>
         <button data-tab="plan"><span>≡</span><b>แผน</b></button>
+        <button data-tab="discovery"><span>✦</span><b>ค้นพบ</b></button>
         <button data-tab="map"><span>⌖</span><b>แผนที่</b></button>
         <button data-tab="saved"><span>▤</span><b>การจอง</b><i></i></button>
         <button data-tab="more"><span>•••</span><b>เพิ่มเติม</b></button>
@@ -71,6 +73,7 @@
     </main>
     <script src="./data.js"></script>
     <script src="./live-sync.js"></script>
+    <script src="./discovery.js"></script>
     <script src="./app.js"></script>
   </body>
 </html>
