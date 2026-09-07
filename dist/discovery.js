@@ -37,14 +37,31 @@ function clearGeminiKey() {
   try { localStorage.removeItem(GEMINI_KEY_STORAGE); } catch { /* ignore */ }
 }
 
-function loadDiscoveryCache() {
+// Cached per city ({ byCity: { Osaka: { fetchedAt, items }, ... }, lastCity }) so switching
+// between filter chips you've already checked today reuses what's stored instead of always
+// spending another Gemini request per tap.
+function readDiscoveryStore() {
   try {
     const raw = localStorage.getItem(DISCOVERY_CACHE_STORAGE);
-    return raw ? JSON.parse(raw) : null;
-  } catch { return null; }
+    const parsed = raw ? JSON.parse(raw) : null;
+    return (parsed && typeof parsed === 'object' && parsed.byCity) ? parsed : { byCity: {}, lastCity: null };
+  } catch { return { byCity: {}, lastCity: null }; }
 }
-function saveDiscoveryCache(payload) {
-  try { localStorage.setItem(DISCOVERY_CACHE_STORAGE, JSON.stringify(payload)); } catch { /* ignore */ }
+function writeDiscoveryStore(store) {
+  try { localStorage.setItem(DISCOVERY_CACHE_STORAGE, JSON.stringify(store)); } catch { /* ignore */ }
+}
+function loadCityEntry(city) {
+  const entry = readDiscoveryStore().byCity[city];
+  return entry && Array.isArray(entry.items) ? entry : null;
+}
+function isCacheFresh(entry) {
+  return !!entry && (Date.now() - (entry.fetchedAt || 0)) <= DISCOVERY_CACHE_TTL_MS;
+}
+function saveCityEntry(city, items, fetchedAt) {
+  const store = readDiscoveryStore();
+  store.byCity[city] = { fetchedAt: fetchedAt || Date.now(), items };
+  store.lastCity = city;
+  writeDiscoveryStore(store);
 }
 function clearDiscoveryCache() {
   try { localStorage.removeItem(DISCOVERY_CACHE_STORAGE); } catch { /* ignore */ }
@@ -52,10 +69,12 @@ function clearDiscoveryCache() {
 
 // Restore whatever was cached last, before app.js's first renderAll() runs.
 (function restoreDiscoveryCache() {
-  const cached = loadDiscoveryCache();
+  const store = readDiscoveryStore();
+  const city = store.lastCity;
+  const cached = city ? store.byCity[city] : null;
   if (cached && Array.isArray(cached.items)) {
     discoveryState.items = cached.items;
-    discoveryState.city = cached.city || null;
+    discoveryState.city = city;
   }
 })();
 
@@ -78,6 +97,38 @@ function imageUrlFor(query) {
   const tags = String(query || 'japan travel')
     .split(/[,\s]+/).filter(Boolean).slice(0, 4).join(',');
   return 'https://loremflickr.com/640/480/' + encodeURIComponent(tags) + '?lock=' + Math.abs(hashCode(tags));
+}
+
+// LoremFlickr is a free keyless service but goes down/unreachable sometimes. picsum.photos is a
+// reliable keyless backup (no thematic matching to the query, but always shows *something*
+// rather than a blank card) used only when the primary fails to actually load.
+function fallbackImageUrlFor(query) {
+  return 'https://picsum.photos/seed/discover' + Math.abs(hashCode(String(query || 'japan travel'))) + '/640/480';
+}
+
+// Cards render with data-img/data-img-fallback instead of an inline background-image so we can
+// actually detect a failed load (a CSS background-image has no error event) and swap to the
+// backup source, or leave the gradient+icon placeholder if both fail.
+function hydrateDiscoveryImage(el) {
+  const primary = el.dataset.img;
+  if (!primary || el.dataset.imgHydrated) return;
+  el.dataset.imgHydrated = '1';
+  const apply = (url) => { el.style.backgroundImage = "url('" + url + "')"; el.classList.add('is-loaded'); };
+  const primaryProbe = new Image();
+  primaryProbe.onload = () => apply(primary);
+  primaryProbe.onerror = () => {
+    const fallback = el.dataset.imgFallback;
+    if (!fallback) return;
+    const fallbackProbe = new Image();
+    fallbackProbe.onload = () => apply(fallback);
+    fallbackProbe.src = fallback;
+  };
+  primaryProbe.src = primary;
+}
+
+function hydrateDiscoveryImages(root) {
+  if (!root) return;
+  root.querySelectorAll('[data-img]').forEach(hydrateDiscoveryImage);
 }
 
 function hashCode(text) {
@@ -223,7 +274,7 @@ async function fetchDiscovery(forceCity) {
       added: false
     }));
     discoveryState.items = items;
-    saveDiscoveryCache({ city, fetchedAt: stamp, items });
+    saveCityEntry(city, items, stamp);
   } catch (error) {
     discoveryState.error = error.message || 'ค้นหากิจกรรมไม่สำเร็จ';
   } finally {
@@ -233,12 +284,24 @@ async function fetchDiscovery(forceCity) {
   }
 }
 
+// Shared by both "open the Discover tab" and "tap a city chip": reuse that city's cache if it's
+// still fresh (within DISCOVERY_CACHE_TTL_MS), otherwise actually call Gemini.
+function loadCityFromCacheOrFetch(city) {
+  const cached = loadCityEntry(city);
+  if (isCacheFresh(cached)) {
+    discoveryState.city = city;
+    discoveryState.items = cached.items;
+    discoveryState.error = null;
+    renderDiscovery();
+    renderToday();
+    return;
+  }
+  fetchDiscovery(city);
+}
+
 function ensureDiscoveryLoaded() {
   if (!getGeminiKey() || discoveryState.loading) return;
-  const cached = loadDiscoveryCache();
-  const city = activeDiscoveryCity();
-  const stale = !cached || cached.city !== city || (Date.now() - (cached.fetchedAt || 0)) > DISCOVERY_CACHE_TTL_MS;
-  if (stale) fetchDiscovery(city);
+  loadCityFromCacheOrFetch(activeDiscoveryCity());
 }
 
 function dateForSheetJs(date) {
@@ -280,7 +343,8 @@ async function addSuggestionToPlan(id) {
     });
     await window.SheetsSync.sync();
     item.added = true;
-    saveDiscoveryCache({ city: discoveryState.city, fetchedAt: Date.now(), items: discoveryState.items });
+    const existingEntry = loadCityEntry(discoveryState.city);
+    saveCityEntry(discoveryState.city, discoveryState.items, existingEntry?.fetchedAt);
     renderAll();
     showToast('เพิ่ม “' + item.title + '” ลงแผนแล้ว');
   } catch (error) {
@@ -343,32 +407,52 @@ function discoveryCarouselMarkup() {
     return `<div class="empty-panel"><strong>ยังไม่มีคำแนะนำ</strong><p>แตะปุ่มค้นหาเพื่อดูกิจกรรมใกล้ ${esc(discoveryState.city || '')}</p><button data-refresh-discovery>ค้นหาเลย</button></div>`;
   }
   return `
-    <div class="discovery-track" id="discovery-track">
-      ${discoveryState.items.map((item) => `
-        <article class="discovery-card">
-          <div class="discovery-card__media" style="background-image:url('${imageUrlFor(item.image_query)}')">
-            <span class="discovery-card__tag">${esc(item.category)}</span>
-          </div>
-          <div class="discovery-card__body">
-            <h3>${esc(item.title)}</h3>
-            <p class="discovery-card__meta">${esc([item.area, item.best_time].filter(Boolean).join(' · '))}</p>
-            <p class="discovery-card__desc">${esc(item.description)}</p>
-            <div class="discovery-card__actions">
-              <button class="discovery-card__map" data-url="${safeUrl(mapUrlForSuggestion(item))}">แผนที่</button>
-              <button class="discovery-card__add${item.added ? ' added' : ''}" data-add-suggestion="${item.id}"${item.added ? ' disabled' : ''}>${item.added ? 'เพิ่มแล้ว ✓' : '+ เพิ่มลงแผน'}</button>
+    <div class="discovery-carousel">
+      <div class="discovery-track" id="discovery-track">
+        ${discoveryState.items.map((item) => `
+          <article class="discovery-card">
+            <div class="discovery-card__media" data-img="${esc(imageUrlFor(item.image_query))}" data-img-fallback="${esc(fallbackImageUrlFor(item.image_query))}">
+              <span class="discovery-card__tag">${esc(item.category)}</span>
             </div>
-          </div>
-        </article>`).join('')}
+            <div class="discovery-card__body">
+              <h3>${esc(item.title)}</h3>
+              <p class="discovery-card__meta">${esc([item.area, item.best_time].filter(Boolean).join(' · '))}</p>
+              <p class="discovery-card__desc">${esc(item.description)}</p>
+              <div class="discovery-card__actions">
+                <button class="discovery-card__map" data-url="${safeUrl(mapUrlForSuggestion(item))}">แผนที่</button>
+                <button class="discovery-card__add${item.added ? ' added' : ''}" data-add-suggestion="${item.id}"${item.added ? ' disabled' : ''}>${item.added ? 'เพิ่มแล้ว ✓' : '+ เพิ่มลงแผน'}</button>
+              </div>
+            </div>
+          </article>`).join('')}
+      </div>
     </div>
-    <div class="discovery-dots" id="discovery-dots">${discoveryState.items.map((_, index) => `<span class="${index === 0 ? 'active' : ''}"></span>`).join('')}</div>
+    <div class="discovery-dots" id="discovery-dots">${discoveryState.items.map((_, index) => `<button class="${index === 0 ? 'active' : ''}" aria-label="การ์ดที่ ${index + 1}"></button>`).join('')}</div>
   `;
 }
 
+// Each card is only ~82% of the track's width (so the next one peeks in), not 100% — dividing
+// scrollLeft by track.clientWidth drifts further off with every card and was why the dots stopped
+// matching the visible card partway through the list. Measure the real per-card scroll step
+// (card width + gap) instead.
+function discoveryScrollStep(track) {
+  const firstCard = track.querySelector('.discovery-card');
+  if (!firstCard) return 0;
+  const gap = parseFloat(getComputedStyle(track).columnGap || getComputedStyle(track).gap || '0') || 0;
+  return firstCard.getBoundingClientRect().width + gap;
+}
+
 function updateDiscoveryDots(track) {
-  const dots = document.querySelectorAll('#discovery-dots span');
-  if (!dots.length || !track.clientWidth) return;
-  const index = Math.round(track.scrollLeft / track.clientWidth);
+  const dots = document.querySelectorAll('#discovery-dots button');
+  const step = discoveryScrollStep(track);
+  if (!dots.length || !step) return;
+  const index = Math.round(track.scrollLeft / step);
   dots.forEach((dot, i) => dot.classList.toggle('active', i === index));
+}
+
+function scrollDiscoveryToIndex(track, index) {
+  const step = discoveryScrollStep(track);
+  if (!step) return;
+  track.scrollTo({ left: step * index, behavior: 'smooth' });
 }
 
 function renderDiscovery() {
@@ -387,6 +471,7 @@ function renderDiscovery() {
   `;
   const track = document.querySelector('#discovery-track');
   if (track) track.addEventListener('scroll', () => updateDiscoveryDots(track), { passive: true });
+  hydrateDiscoveryImages(view);
 }
 
 function discoveryMiniCard() {
@@ -401,10 +486,13 @@ function discoveryMiniCard() {
         <p class="card-meta">กิจกรรมใกล้ Osaka และ Tokyo</p>
       </article>`;
   }
+  // app.js sets #today-view's innerHTML synchronously right after calling this function, so the
+  // slide elements don't exist yet — defer hydration one tick so they're actually in the DOM.
+  setTimeout(() => hydrateDiscoveryImages(document.querySelector('#today-view')), 0);
   return `
     <article class="mini-card discover-card" data-tab="discovery">
       <div class="discover-card__carousel">
-        ${items.map((item, index) => `<span class="discover-card__slide" style="background-image:url('${imageUrlFor(item.image_query)}');animation-delay:${index * -3.4}s"></span>`).join('')}
+        ${items.map((item, index) => `<span class="discover-card__slide" data-img="${esc(imageUrlFor(item.image_query))}" data-img-fallback="${esc(fallbackImageUrlFor(item.image_query))}" style="animation-delay:${index * -3.4}s"></span>`).join('')}
         <div class="discover-card__overlay">
           <span class="status warning">✦ AI แนะนำ</span>
           ${items.length > 1 ? `<span class="discover-card__dots">${items.map(() => '•').join('')}</span>` : ''}
@@ -423,10 +511,17 @@ document.addEventListener('click', async (event) => {
 
   const cityChip = target.closest('[data-discovery-city]');
   if (cityChip) {
-    const value = cityChip.dataset.discoveryCity;
-    discoveryState.city = value;
     discoveryState.useMyLocation = false;
-    fetchDiscovery(value);
+    loadCityFromCacheOrFetch(cityChip.dataset.discoveryCity);
+    return;
+  }
+
+  const dot = target.closest('#discovery-dots button');
+  if (dot) {
+    const track = document.querySelector('#discovery-track');
+    const dots = Array.from(document.querySelectorAll('#discovery-dots button'));
+    const index = dots.indexOf(dot);
+    if (track && index >= 0) scrollDiscoveryToIndex(track, index);
     return;
   }
 
