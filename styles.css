@@ -13,12 +13,15 @@
 .setup-card__row{display:flex;gap:8px}
 .setup-card__row input{flex:1;min-width:0;border:1px solid var(--line);border-radius:12px;padding:11px 12px;background:var(--paper);outline:none;font-size:.85rem}
 .setup-card__row button{border:0;background:var(--ink);color:white;border-radius:12px;padding:0 18px;font-weight:700;font-size:.8rem}
-.discovery-track{display:flex;gap:12px;overflow-x:auto;scroll-snap-type:x mandatory;margin:14px -20px 0;padding:2px 20px 6px;scrollbar-width:none}
+.discovery-carousel{position:relative;margin:14px -20px 0}
+.discovery-carousel:after{content:'';position:absolute;top:2px;right:0;bottom:6px;width:30px;background:linear-gradient(to right,transparent,var(--paper) 80%);pointer-events:none}
+.discovery-track{display:flex;gap:12px;overflow-x:auto;scroll-snap-type:x mandatory;padding:2px 20px 6px;scrollbar-width:none;-webkit-overflow-scrolling:touch;touch-action:pan-x;scroll-padding-left:20px}
 .discovery-track::-webkit-scrollbar{display:none}
 .discovery-card{flex:0 0 82%;scroll-snap-align:start;background:var(--surface);border:1px solid var(--line);border-radius:20px;overflow:hidden;display:flex;flex-direction:column}
 .discovery-card.skeleton{height:280px;background:linear-gradient(100deg,#efece3 30%,#f7f4ec 50%,#efece3 70%);background-size:200% 100%;animation:skeletonShine 1.4s infinite}
 @keyframes skeletonShine{to{background-position:-200% 0}}
-.discovery-card__media{height:150px;background-size:cover;background-position:center;position:relative;background-color:#e7e4dc}
+.discovery-card__media{height:150px;background-size:cover;background-position:center;position:relative;background-color:#e7e4dc;background-image:linear-gradient(135deg,#e7e4dc,#f2cad0)}
+.discovery-card__media:not(.is-loaded):before{content:'📍';position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:1.8rem;opacity:.5}
 .discovery-card__tag{position:absolute;left:10px;top:10px;background:rgba(23,37,84,.72);color:white;font-size:.65rem;font-weight:700;padding:5px 9px;border-radius:999px}
 .discovery-card__body{padding:14px}
 .discovery-card__body h3{font-size:1rem;margin:0 0 4px;line-height:1.3}
@@ -29,10 +32,10 @@
 .discovery-card__add{background:var(--ink)!important;color:white!important;border-color:var(--ink)!important}
 .discovery-card__add.added{background:var(--green)!important;border-color:var(--green)!important}
 .discovery-dots{display:flex;justify-content:center;gap:6px;margin-top:12px}
-.discovery-dots span{width:6px;height:6px;border-radius:50%;background:#d9d5cc;display:block;transition:.25s}
-.discovery-dots span.active{background:var(--ink);width:16px;border-radius:4px}
+.discovery-dots button{width:6px;height:6px;padding:0;border:0;border-radius:50%;background:#d9d5cc;display:block;transition:.25s}
+.discovery-dots button.active{background:var(--ink);width:16px;border-radius:4px}
 .discover-card{padding:0;overflow:hidden;display:flex;flex-direction:column}
-.discover-card__carousel{position:relative;height:92px;overflow:hidden;background-color:#e7e4dc}
+.discover-card__carousel{position:relative;height:92px;overflow:hidden;background-color:#e7e4dc;background-image:linear-gradient(135deg,#e7e4dc,#f2cad0)}
 .discover-card__slide{position:absolute;inset:0;background-size:cover;background-position:center;opacity:0;animation:discoverCrossfade 10.2s infinite}
 .discover-card__slide:first-child{opacity:1}
 .discover-card__overlay{position:absolute;inset:0;display:flex;align-items:flex-start;justify-content:space-between;padding:8px;background:linear-gradient(180deg,rgba(23,37,84,.05),rgba(23,37,84,.55))}
