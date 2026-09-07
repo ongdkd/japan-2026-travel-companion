@@ -1,0 +1,156 @@
+/* Functional completion layer — keeps the original visual system while improving usability. */
+.view{padding:24px 20px 112px;min-height:100vh}
+.topbar h1,.simple-header h1,.map-header h1,.detail-header h1{font-size:2rem}
+.eyebrow{font-size:.75rem}
+.status{font-size:.75rem;padding:5px 8px}
+.card-label,.card-meta,.timeline-item time,.timeline-item p,.plan-item time,.plan-content>p,
+.tag-row span,.button-row button,.action-row button,.sync-note strong,.sync-note p,.text-button,
+.booking-main p,.booking-main small,.menu-section h2,.menu-section small,.privacy-note p,
+.data-source p,.map-sheet p,.metric-row span{font-size:.75rem}
+.mini-card h3,.timeline-item strong,.plan-title-row h3,.booking-main h3,.menu-section strong{font-size:.9rem}
+.button-row button,.action-row button,.sheet-actions button,.resource-actions button{min-height:42px}
+.icon-button,.round-add,.back-button{min-width:44px;min-height:44px}
+
+.date-strip{display:flex;gap:6px;overflow-x:auto;scrollbar-width:none;padding:4px 0 10px}
+.date-strip button{min-width:52px}
+.button-row.one{grid-template-columns:1fr}
+.empty-state,.empty-panel{padding:24px;text-align:center;color:var(--muted);font-size:.9rem}
+.empty-panel{background:var(--surface);border:1px solid var(--line);border-radius:18px}
+.empty-panel strong{display:block;color:var(--ink);margin-bottom:5px}
+.empty-panel p{margin:4px 0 14px}
+.empty-panel button,.primary-wide{border:0;border-radius:13px;background:var(--ink);color:#fff;padding:13px 16px;font-weight:700}
+.sync-note.is-live>span{background:#dff2e9;color:var(--green)}
+[data-sync-sheet][aria-busy=true]{opacity:.6;cursor:progress}
+[hidden]{display:none!important}
+
+/* Real map */
+.map-view{height:100dvh;min-height:620px;padding:0;overflow:hidden}
+#real-map{position:absolute;inset:0 0 76px;background:#e5e8e5;z-index:0}
+.map-unavailable{display:grid;place-items:center;padding:24px;text-align:center;color:var(--muted)}
+.map-header.floating{position:absolute;z-index:500;top:max(14px,env(safe-area-inset-top));left:18px;right:18px;padding:0;pointer-events:none}
+.map-header.floating h1,.map-header.floating button{pointer-events:auto}
+.map-header.floating h1{background:rgba(255,253,250,.94);padding:10px 16px;border-radius:16px;box-shadow:var(--shadow)}
+.map-controls{position:absolute;z-index:500;top:max(78px,calc(env(safe-area-inset-top) + 68px));left:14px;right:14px}
+.search-box{margin:0}
+.search-box input{min-height:50px;background:rgba(255,253,250,.96);box-shadow:0 8px 22px rgba(23,37,84,.12);font-size:1rem}
+.filter-row{padding:9px 0 0}
+.filter-row button{min-height:38px;background:rgba(255,253,250,.96);font-size:.8rem;box-shadow:0 3px 10px rgba(23,37,84,.08)}
+.map-sheet{z-index:500;left:12px;right:12px;bottom:calc(88px + env(safe-area-inset-bottom));padding:8px 18px 18px;max-height:245px}
+.map-sheet h2{font-size:1.3rem}
+.map-sheet__head{gap:12px}
+.place-icon{display:grid;place-items:center;width:44px;height:44px;background:#f0ede5;border-radius:14px;font-size:1.4rem;flex:0 0 auto}
+.metric-row{margin:12px 0}
+.metric-row strong{font-size:.82rem}
+.map-marker-wrap{background:transparent!important;border:0!important}
+.map-marker{display:grid;place-items:center;width:40px;height:40px;border-radius:15px 15px 15px 4px;transform:rotate(-45deg);border:2px solid #fff;background:var(--ink);box-shadow:0 7px 16px rgba(23,37,84,.3);font-size:1.05rem}
+.map-marker.hotel{background:#65528e}.map-marker.luggage{background:var(--red)}.map-marker.shopping{background:#92701d}
+.map-marker.food{background:#27765e}.map-marker.sightseeing{background:var(--ink)}
+.map-marker-wrap .map-marker{line-height:1}
+.map-marker b{display:block;transform:rotate(45deg);font-weight:400}
+.leaflet-control-attribution{font-size:9px}
+.leaflet-bottom.leaflet-right{bottom:82px}
+
+/* Full-screen resources */
+.detail-view{position:fixed;z-index:700;inset:0;overflow-y:auto;background:var(--paper);padding:20px 20px calc(40px + env(safe-area-inset-bottom));max-width:480px;margin:0 auto}
+.detail-header{display:grid;grid-template-columns:44px 1fr 44px;gap:12px;align-items:center;padding-top:max(4px,env(safe-area-inset-top));margin-bottom:22px}
+.detail-header h1{font-family:"Shippori Mincho",serif;line-height:1.15;margin:0}
+.detail-header .eyebrow{margin-bottom:3px}
+.back-button{border:1px solid var(--line);border-radius:50%;background:var(--surface);font-size:1.25rem}
+.behind-detail{visibility:hidden}
+.resource-card{display:grid;grid-template-columns:46px 1fr;gap:12px;padding:14px;margin-bottom:10px;background:var(--surface);border:1px solid var(--line);border-radius:17px}
+.resource-icon{display:grid;place-items:center;width:46px;height:46px;border-radius:14px;background:#f0ede5;font-size:1.35rem}
+.resource-body{min-width:0}.resource-body h3{margin:0;font-size:.95rem;line-height:1.35}.resource-body p{margin:3px 0;color:var(--muted);font-size:.8rem}
+.resource-body small{display:block;color:#606676;font-size:.75rem;line-height:1.5;margin-top:5px}
+.resource-actions{display:flex;gap:8px;margin-top:10px}.resource-actions button{border:1px solid var(--line);background:#fff;border-radius:11px;padding:8px 14px;font-size:.78rem;font-weight:700}
+.section-summary,.info-banner{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:15px;margin-bottom:15px;background:#eee9df;border-radius:16px}
+.section-summary span{color:var(--muted);font-size:.8rem}
+.info-banner{display:block;background:#edf1fb;border:1px solid #d8e0f2}.info-banner strong{font-size:.9rem}.info-banner p{margin:5px 0 0;color:var(--muted);font-size:.8rem;line-height:1.5}
+.budget-hero{padding:20px;margin-bottom:16px;border-radius:22px;background:linear-gradient(140deg,var(--ink),#294485);color:#fff}
+.budget-hero p{margin:0;font-size:.8rem;color:#cdd5ed}.budget-hero strong{display:block;margin:5px 0;font-family:"Shippori Mincho",serif;font-size:2rem}
+.budget-hero span{font-size:.8rem;color:#cdd5ed}.progress{height:8px;margin-top:15px;border-radius:8px;background:rgba(255,255,255,.2);overflow:hidden}.progress i{display:block;height:100%;background:#f6d176;border-radius:8px}
+.booking-detail-hero,.place-detail-hero{text-align:center;padding:22px;margin-bottom:14px;background:var(--surface);border:1px solid var(--line);border-radius:22px}
+.booking-icon.large,.place-detail-hero>span{display:grid;place-items:center;width:64px;height:64px;margin:0 auto 12px;border-radius:20px;background:#f0ede5;font-size:2rem}
+.booking-detail-hero h2,.place-detail-hero h2{font-family:"Shippori Mincho",serif;font-size:1.45rem;margin:12px 0 4px}.booking-detail-hero p,.place-detail-hero p{margin:0;color:var(--muted);font-size:.85rem}
+.detail-list{margin:0 0 16px;padding:0 16px;background:var(--surface);border:1px solid var(--line);border-radius:18px}
+.detail-list div{display:grid;grid-template-columns:92px 1fr;gap:12px;padding:13px 0;border-top:1px solid var(--line)}
+.detail-list div:first-child{border-top:0}.detail-list dt{color:var(--muted);font-size:.78rem}.detail-list dd{margin:0;font-size:.85rem;line-height:1.5}
+.primary-wide{width:100%;min-height:48px}
+
+/* More hub and bookings */
+.menu-section{padding:10px 14px}.menu-section button{min-height:62px}
+.alert-card{width:100%;text-align:left;border:1px solid #f1c5a9}.alert-card b{font-size:.78rem;color:var(--red)}
+.data-source{color:inherit;text-decoration:none}
+.privacy-note{line-height:1.5}
+
+/* Responsive and accessibility */
+@media(max-height:700px){
+  .map-sheet{max-height:205px;padding-bottom:12px}
+  .map-sheet .metric-row{display:none}
+  .map-sheet h2{font-size:1.1rem}
+}
+@media(min-width:700px){
+  body{padding:28px 0}
+  .app-shell{min-height:900px;border-radius:28px}
+  .detail-view{top:28px;bottom:28px;border-radius:28px;box-shadow:0 0 80px rgba(23,37,84,.16)}
+  .bottom-nav{bottom:28px;border-radius:0 0 28px 28px}
+  .map-view{height:844px}
+}
+@media(max-width:370px){
+  .split-cards{grid-template-columns:1fr}
+  .map-sheet{left:7px;right:7px}
+  .metric-row{display:none}
+}
+@media(display-mode:standalone){[data-install-app]{display:none!important}}
+@media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important}}
+
+/* Nearby map — map and ranked places work together like a ride-hailing picker. */
+.bottom-nav{z-index:900}
+.toast{z-index:1100}
+#real-map{inset:0 0 calc(76px + env(safe-area-inset-bottom));z-index:0}
+.map-controls{position:relative;z-index:auto;inset:auto;padding:0 14px}
+.search-box{position:relative;display:flex;align-items:center}
+.search-box>span{position:absolute;left:16px;z-index:2;color:var(--muted);font-size:1.15rem}
+.search-box input{width:100%;min-height:52px;padding:0 46px 0 44px;border:1px solid rgba(166,160,154,.6);border-radius:17px;background:#fff;color:var(--ink);box-shadow:none}
+.search-box>button{position:absolute;right:8px;width:36px;height:36px;border:0;border-radius:50%;background:#ebe8e2;color:#646978;font-size:1.2rem}
+.map-results-panel{position:absolute;z-index:520;inset:0 0 calc(76px + env(safe-area-inset-bottom));display:flex;flex-direction:column;padding:max(5px,env(safe-area-inset-top)) 0 0;background:var(--paper);box-shadow:0 -12px 40px rgba(23,37,84,.16);overflow:hidden;transition:transform .26s cubic-bezier(.2,.75,.3,1);will-change:transform}
+.map-results-panel.collapsed{transform:translateY(calc(100% - min(44dvh,400px)));border-radius:24px 24px 0 0}
+.map-results-panel.dragging{transition:none;user-select:none}
+.drag-handle{display:grid;place-items:center;flex:0 0 30px;width:88px;height:30px;margin:0 auto 3px;padding:0;border:0;background:transparent;touch-action:none;cursor:ns-resize}
+.drag-handle span{display:block;width:46px;height:5px;border-radius:999px;background:#c9c5be;transition:background .18s}
+.drag-handle:focus-visible{outline:3px solid rgba(39,118,94,.25);border-radius:12px}.drag-handle:active span{background:#888f98}
+.filter-row{display:flex;gap:7px;padding:9px 0 12px;overflow-x:auto;scrollbar-width:none}.filter-row::-webkit-scrollbar{display:none}
+.filter-row button{flex:0 0 auto;min-height:40px;padding:0 13px;border:1px solid var(--line);background:#fff;box-shadow:none;font-size:.875rem}
+.filter-row button.active{background:var(--ink);border-color:var(--ink);color:#fff}
+.map-results-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:4px 16px 12px}
+.map-results-heading div{min-width:0}.map-results-heading strong{display:block;font-size:1.05rem}.map-results-heading span{display:block;margin-top:2px;color:var(--muted);font-size:.78rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.map-results-heading button{flex:0 0 auto;min-height:42px;border:0;border-radius:12px;background:#e7eee9;color:#1f6a52;padding:9px 12px;font-size:.78rem;font-weight:700}
+.map-results-list{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:0 14px 30px;scrollbar-width:thin}
+.map-result{position:relative;display:grid;grid-template-columns:22px 44px minmax(0,1fr) auto;gap:10px;align-items:center;margin-bottom:8px;padding:11px 10px;background:var(--surface);border:1px solid var(--line);border-radius:16px;cursor:pointer;transition:border-color .16s,transform .16s,box-shadow .16s}
+.map-result:active{transform:scale(.99)}.map-result.selected{border-color:#27765e;box-shadow:0 6px 18px rgba(39,118,94,.12)}
+.map-result-rank{color:#777d88;font-size:.78rem;text-align:center;font-weight:700}
+.map-result-icon{display:grid;place-items:center;width:44px;height:44px;border-radius:14px;background:#e8ecea;font-size:1.3rem}.map-result-icon.food{background:#e1f0ea}.map-result-icon.hotel{background:#ebe7f5}.map-result-icon.shopping{background:#f4ead0}
+.map-result-copy{min-width:0}.map-result-copy>div{display:flex;align-items:flex-start;justify-content:space-between;gap:8px}.map-result-copy h2{margin:0;font:700 .9rem/1.35 "Noto Sans Thai",sans-serif;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.map-result-copy b{flex:0 0 auto;color:#27765e;font-size:.74rem}.map-result-copy p{margin:2px 0;color:var(--muted);font-size:.78rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.map-result-copy small{display:block;color:#777d88;font-size:.72rem}
+.map-result>button{min-height:40px;border:0;border-radius:10px;background:var(--ink);color:#fff;padding:9px 10px;font-size:.74rem;font-weight:700}
+.empty-map-results{text-align:center;padding:36px 15px;color:var(--muted)}.empty-map-results strong{color:var(--ink)}.empty-map-results p{font-size:.78rem}
+.leaflet-bottom.leaflet-right{bottom:calc(min(44dvh,400px) + 12px)}
+
+/* In-app itinerary editor. */
+.danger-action{color:#a23c32!important;border-color:#ecc8c3!important;background:#fff7f5!important}
+.plan-editor{width:min(92vw,450px);max-height:88dvh;margin:auto;padding:0;border:0;border-radius:24px;background:var(--paper);color:var(--ink);box-shadow:0 24px 90px rgba(19,32,68,.3)}
+.plan-editor::backdrop{background:rgba(14,23,49,.55);backdrop-filter:blur(3px)}
+.plan-editor form{display:grid;gap:13px;padding:20px;overflow-y:auto;max-height:88dvh}
+.plan-editor header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:2px}.plan-editor header h2{margin:2px 0 0;font-family:"Shippori Mincho",serif;font-size:1.45rem}.plan-editor header button{width:42px;height:42px;border:1px solid var(--line);border-radius:50%;background:var(--surface);font-size:1.25rem}
+.plan-editor label{display:grid;gap:6px;color:#555d6c;font-size:.78rem;font-weight:700}.plan-editor input,.plan-editor select,.plan-editor textarea{width:100%;min-height:46px;box-sizing:border-box;border:1px solid #d7d3cc;border-radius:12px;background:#fff;padding:10px 12px;color:var(--ink);font:500 .9rem/1.4 "Noto Sans Thai",sans-serif}.plan-editor textarea{resize:vertical}.plan-editor input:focus,.plan-editor select:focus,.plan-editor textarea:focus{outline:3px solid rgba(39,118,94,.15);border-color:#27765e}
+.editor-grid{display:grid;gap:10px}.editor-grid.two{grid-template-columns:1fr 1fr}
+.editor-actions{display:grid;grid-template-columns:.75fr 1.5fr;gap:10px;padding-top:4px}.editor-actions button{min-height:48px;border:1px solid var(--line);border-radius:13px;background:#fff;font-weight:700}.editor-actions .save-plan{border-color:var(--ink);background:var(--ink);color:#fff}.editor-actions button:disabled{opacity:.58}
+.editor-actions .save-link{border-color:var(--ink);background:var(--ink);color:#fff}
+.editor-help{margin:-2px 0 1px;color:var(--muted);font-size:.78rem;line-height:1.55}
+.quick-add-link{width:100%;display:grid;grid-template-columns:42px 1fr auto;align-items:center;gap:11px;margin:0 0 14px;padding:13px;border:1px dashed #88aa9d;border-radius:17px;background:#edf5f1;color:var(--ink);text-align:left}
+.quick-add-link>span{display:grid;place-items:center;width:42px;height:42px;border-radius:13px;background:#fff;font-size:1.25rem}.quick-add-link strong,.quick-add-link small{display:block}.quick-add-link strong{font-size:.86rem}.quick-add-link small{margin-top:2px;color:#557064;font-size:.7rem}.quick-add-link>b{font-size:1.25rem;color:#27765e}
+.link-detection{display:grid;grid-template-columns:38px 1fr;gap:10px;align-items:center;padding:12px;border:1px solid var(--line);border-radius:14px;background:var(--surface)}
+.link-detection>span{display:grid;place-items:center;width:36px;height:36px;border-radius:50%;background:#ebe8e2;font-weight:800}.link-detection strong{display:block;font-size:.8rem}.link-detection p{margin:2px 0 0;color:var(--muted);font-size:.7rem;line-height:1.4}.link-detection.loading>span{animation:spin 1s linear infinite}.link-detection.success{border-color:#afd1c3;background:#edf7f2}.link-detection.success>span{background:#d5eee4;color:#1f6a52}.link-detection.error{border-color:#e9bcb7;background:#fff5f3}.link-detection.error>span{background:#f4d8d4;color:#a23c32}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+@media(max-height:700px){.map-results-panel.collapsed{transform:translateY(calc(100% - min(50dvh,350px)))}}
+@media(min-width:700px){.map-results-panel{bottom:76px}.map-results-panel.collapsed{transform:translateY(calc(100% - 390px))}.plan-editor{max-height:820px}.plan-editor form{max-height:820px}}
+@media(max-width:370px){.map-result{grid-template-columns:18px 40px minmax(0,1fr)}.map-result>button{grid-column:3;justify-self:start}.map-result-icon{width:40px;height:40px}.editor-grid.two{grid-template-columns:1fr}}

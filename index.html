@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="th">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#172554" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="Japan 2026" />
+    <meta name="description" content="Japan 2026 — ผู้ช่วยเดินทางส่วนตัวสำหรับ Osaka, Kyoto, Nara และ Tokyo" />
+    <title>Japan 2026 Travel Companion</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;500;600;700&family=Shippori+Mincho:wght@600;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
+    <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="./connected.css" />
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="icon" href="./app-icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+  </head>
+  <body>
+    <main class="app-shell" aria-live="polite">
+      <section class="view active" id="today-view" aria-labelledby="today-title"></section>
+      <section class="view" id="plan-view" aria-labelledby="plan-title"></section>
+      <section class="view map-view" id="map-view" aria-label="แผนที่และรายการสถานที่"></section>
+      <section class="view" id="saved-view" aria-labelledby="saved-title"></section>
+      <section class="view" id="more-view" aria-labelledby="more-title"></section>
+      <section class="detail-view" id="detail-view" hidden aria-labelledby="detail-title">
+        <header class="detail-header">
+          <button class="back-button" data-close-detail aria-label="กลับ">←</button>
+          <div><p class="eyebrow" id="detail-eyebrow">JAPAN 2026</p><h1 id="detail-title">รายละเอียด</h1></div>
+          <button class="icon-button" data-sync-sheet aria-label="ซิงก์ Google Sheets">↻</button>
+        </header>
+        <div id="detail-content"></div>
+      </section>
+      <nav class="bottom-nav" aria-label="เมนูหลัก">
+        <button class="active" data-tab="today"><span>⌂</span><b>วันนี้</b></button>
+        <button data-tab="plan"><span>≡</span><b>แผน</b></button>
+        <button data-tab="map"><span>⌖</span><b>แผนที่</b></button>
+        <button data-tab="saved"><span>▤</span><b>การจอง</b><i></i></button>
+        <button data-tab="more"><span>•••</span><b>เพิ่มเติม</b></button>
+      </nav>
+      <dialog class="plan-editor" id="plan-editor" aria-labelledby="plan-editor-title">
+        <form id="plan-editor-form">
+          <header><div><p class="eyebrow">TRAVEL PLAN</p><h2 id="plan-editor-title">เพิ่มกิจกรรม</h2></div><button type="button" data-close-plan-editor aria-label="ปิด">×</button></header>
+          <input type="hidden" name="Itinerary_ID" />
+          <div class="editor-grid two"><label>วันที่<input name="Date" type="date" required /></label><label>เมือง<input name="City" placeholder="Tokyo" required /></label></div>
+          <div class="editor-grid two"><label>เริ่ม<input name="Start_Time" type="time" required /></label><label>สิ้นสุด<input name="End_Time" type="time" required /></label></div>
+          <label>กิจกรรม<input name="Activity" placeholder="เช่น เดินเล่น Asakusa" required /></label>
+          <label>สถานที่<input name="Place_Name" placeholder="ชื่อสถานที่หรือย่าน" /></label>
+          <div class="editor-grid two"><label>สถานะ<select name="Status"><option>Suggested</option><option>Planned</option><option>Confirmed</option><option>Optional</option><option>Must do</option></select></label><label>งบประมาณ (¥)<input name="Budget_JPY" type="number" min="0" step="1" placeholder="0" /></label></div>
+          <label>ลิงก์<input name="Link" type="url" inputmode="url" placeholder="https://" /></label>
+          <label>หมายเหตุ<textarea name="Notes" rows="3" placeholder="รายละเอียดที่ควรรู้"></textarea></label>
+          <div class="editor-actions"><button type="button" data-close-plan-editor>ยกเลิก</button><button class="save-plan" type="submit">บันทึกลง Google Sheets</button></div>
+        </form>
+      </dialog>
+      <dialog class="plan-editor quick-link-editor" id="quick-link-editor" aria-labelledby="quick-link-title">
+        <form id="quick-link-form">
+          <header><div><p class="eyebrow">SMART SAVE</p><h2 id="quick-link-title">เพิ่มจากลิงก์</h2></div><button type="button" data-close-quick-link aria-label="ปิด">×</button></header>
+          <input type="hidden" name="Kind" value="food" />
+          <p class="editor-help">วางลิงก์ Google Maps, TikTok, YouTube หรือ Instagram แอปจะเติมข้อมูลที่ตรวจพบและบันทึกลง Google Sheets ให้</p>
+          <label>ลิงก์<input name="URL" type="url" inputmode="url" placeholder="https://…" required /></label>
+          <div class="link-detection" id="link-detection" aria-live="polite"><span>⌕</span><div><strong>พร้อมตรวจลิงก์</strong><p>ระบบจะระบุแพลตฟอร์ม ชื่อ พื้นที่ และพิกัดเท่าที่ลิงก์มีให้</p></div></div>
+          <div class="editor-actions"><button type="button" data-close-quick-link>ยกเลิก</button><button class="save-link" type="submit">ตรวจและเพิ่ม</button></div>
+        </form>
+      </dialog>
+      <div class="toast" role="status" aria-live="polite"></div>
+    </main>
+    <script src="./data.js"></script>
+    <script src="./live-sync.js"></script>
+    <script src="./app.js"></script>
+  </body>
+</html>
