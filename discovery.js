@@ -18,11 +18,16 @@ const DISCOVERY_CACHE_STORAGE = 'japan2026.discovery.v1';
 // add it back, Google returns a hard "no longer available" error for it now.
 const GEMINI_MODEL_CANDIDATES = ['gemini-3.8-flash', 'gemini-3.5-flash', 'gemini-3.1-flash-lite'];
 const DISCOVERY_CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
+// Reaching the end of a carousel fetches one more batch automatically — capped per city so an
+// idle finger bouncing at the edge can't quietly burn through the whole free Gemini quota.
+const MAX_DISCOVERY_LOAD_MORE = 2;
 
 const discoveryState = {
   city: null,
   useMyLocation: false,
   loading: false,
+  loadingMore: false,
+  moreCount: 0,
   error: null,
   items: []
 };
@@ -57,9 +62,10 @@ function loadCityEntry(city) {
 function isCacheFresh(entry) {
   return !!entry && (Date.now() - (entry.fetchedAt || 0)) <= DISCOVERY_CACHE_TTL_MS;
 }
-function saveCityEntry(city, items, fetchedAt) {
+function saveCityEntry(city, items, fetchedAt, moreCount) {
   const store = readDiscoveryStore();
-  store.byCity[city] = { fetchedAt: fetchedAt || Date.now(), items };
+  const existing = store.byCity[city];
+  store.byCity[city] = { fetchedAt: fetchedAt || Date.now(), items, moreCount: moreCount != null ? moreCount : (existing?.moreCount || 0) };
   store.lastCity = city;
   writeDiscoveryStore(store);
 }
@@ -75,6 +81,7 @@ function clearDiscoveryCache() {
   if (cached && Array.isArray(cached.items)) {
     discoveryState.items = cached.items;
     discoveryState.city = city;
+    discoveryState.moreCount = cached.moreCount || 0;
   }
 })();
 
@@ -203,9 +210,9 @@ function isAuthFormatIssueMessage(message) {
   return /oauth 2 access token|access_token_type_unsupported|invalid authentication credentials/i.test(message || '');
 }
 
-function buildDiscoveryPrompt(city) {
+function buildDiscoveryPrompt(city, excludeTitles) {
   const trip = DATA.trip || {};
-  return [
+  const lines = [
     'คุณเป็นเพื่อนสายเที่ยวที่รู้ลึกเรื่องที่เที่ยว/ที่กิน/ที่ช้อปสายฮิปในญี่ปุ่น กำลังแนะนำที่เที่ยวให้เพื่อนคนไทยวัย Gen Z (ประมาณ 18-27 ปี) ที่กำลังเดินทางไปญี่ปุ่น',
     `ทริป: ${trip.name || 'Japan 2026'} ช่วงวันที่ ${trip.startDate || ''} ถึง ${trip.endDate || ''}`,
     `กำลังอยู่ที่หรือวางแผนอยู่ใกล้เมือง: ${city}, ประเทศญี่ปุ่น`,
@@ -213,9 +220,13 @@ function buildDiscoveryPrompt(city) {
     'เลือกที่ที่ถูกจริตสาย Gen Z: ถ่ายรูปลงโซเชียลได้สวย (aesthetic/instagrammable), กำลังเป็นกระแสใน TikTok/IG, คาเฟ่ธีมเก๋ ๆ, ร้านของกินที่กำลังไวรัล, ตลาดนัด/ตลาดกลางคืนสายชิล, ร้านมือสอง/วินเทจ, ป็อปอัพสโตร์, สตรีทอาร์ต, จุดถ่ายรูปลับที่คนไทยอาจไม่รู้จัก — เน้นสิ่งเหล่านี้มากกว่าสถานที่ท่องเที่ยวแบบดั้งเดิมที่ใคร ๆ ก็รู้จัก',
     'ต้องมีอย่างน้อย 3 รายการเป็นร้านอาหาร คาเฟ่ หรือของกินที่กำลังฮิต และอย่างน้อย 2 รายการเป็นห้างสรรพสินค้า ตลาด หรือแหล่งช้อปปิ้งสายเทรนด์ ที่เหลือเป็นเทศกาล ธรรมชาติ หรือสถานที่ท่องเที่ยวอื่น ๆ ที่มีมุมถ่ายรูปเก๋',
     'เน้นสิ่งที่เหมาะกับช่วงเดือนตุลาคม เช่น เทศกาลตามฤดูกาล ใบไม้เปลี่ยนสี ตลาดกลางคืน นิทรรศการ หรือจุดท่องเที่ยวที่คนไทยอาจไม่รู้จักมาก่อน',
-    'เขียน description ด้วยโทนเป็นกันเองแบบเพื่อนคุยกัน สนุก กระชับ ใช้สแลงไทยร่วมสมัยได้พอประมาณ (ไม่ทางการ ไม่เวิ่นเว้อ) แต่ยังให้ข้อมูลที่เป็นประโยชน์จริง',
-    'ตอบเป็น JSON array เท่านั้น (ห้ามมีข้อความอื่นนอกเหนือ JSON) แต่ละรายการมีฟิลด์: title, category (หมวดสั้น ๆ ภาษาไทย เช่น เทศกาล, ธรรมชาติ, ช้อปปิ้ง, อาหาร), city, area, description (ภาษาไทย 1-2 ประโยค โทน Gen Z ตามด้านบน), best_time, image_query (คำค้นภาษาอังกฤษสั้น 2-4 คำ เน้นมุมที่ดูสวย aesthetic เหมาะลงโซเชียล), map_query (ชื่อสถานที่ภาษาอังกฤษสำหรับค้นใน Google Maps)'
-  ].join('\n');
+    'เขียน description ด้วยโทนเป็นกันเองแบบเพื่อนคุยกัน สนุก กระชับ ใช้สแลงไทยร่วมสมัยได้พอประมาณ (ไม่ทางการ ไม่เวิ่นเว้อ) แต่ยังให้ข้อมูลที่เป็นประโยชน์จริง'
+  ];
+  if (excludeTitles && excludeTitles.length) {
+    lines.push('ห้ามแนะนำที่ซ้ำหรือคล้ายกับรายการที่เคยแนะนำไปแล้วนี้ ขอเป็นที่ใหม่ล้วน: ' + excludeTitles.join(', '));
+  }
+  lines.push('ตอบเป็น JSON array เท่านั้น (ห้ามมีข้อความอื่นนอกเหนือ JSON) แต่ละรายการมีฟิลด์: title, category (หมวดสั้น ๆ ภาษาไทย เช่น เทศกาล, ธรรมชาติ, ช้อปปิ้ง, อาหาร), city, area, description (ภาษาไทย 1-2 ประโยค โทน Gen Z ตามด้านบน), best_time, image_query (คำค้นภาษาอังกฤษสั้น 2-4 คำ เน้นมุมที่ดูสวย aesthetic เหมาะลงโซเชียล), map_query (ชื่อสถานที่ภาษาอังกฤษสำหรับค้นใน Google Maps)');
+  return lines.join('\n');
 }
 
 function isModelUnavailableMessage(message) {
@@ -330,7 +341,8 @@ async function fetchDiscovery(forceCity) {
       added: false
     }));
     discoveryState.items = items;
-    saveCityEntry(city, items, stamp);
+    discoveryState.moreCount = 0;
+    saveCityEntry(city, items, stamp, 0);
   } catch (error) {
     discoveryState.error = error.message || 'ค้นหากิจกรรมไม่สำเร็จ';
   } finally {
@@ -340,6 +352,94 @@ async function fetchDiscovery(forceCity) {
   }
 }
 
+// Reaching the last card of either carousel calls this automatically: fetch one more batch
+// (telling Gemini what's already shown so it doesn't repeat itself) and splice the new items into
+// whichever section(s) they belong in, without resetting anyone's scroll position.
+async function loadMoreDiscovery() {
+  if (discoveryState.loading || discoveryState.loadingMore) return;
+  if ((discoveryState.moreCount || 0) >= MAX_DISCOVERY_LOAD_MORE) return;
+  if (!getGeminiKey() || !discoveryState.items.length) return;
+  const city = discoveryState.city || activeDiscoveryCity();
+  discoveryState.loadingMore = true;
+  renderDiscoveryLoadMoreState();
+  try {
+    const existingTitles = discoveryState.items.map((item) => item.title).filter(Boolean);
+    const raw = await callGemini(buildDiscoveryPrompt(city, existingTitles));
+    const stamp = Date.now();
+    const seen = new Set(existingTitles.map((title) => title.toLowerCase().trim()));
+    const newItems = raw
+      .filter((item) => item.title && !seen.has(String(item.title).toLowerCase().trim()))
+      .slice(0, 10)
+      .map((item, index) => ({
+        id: 'sug_' + stamp + '_' + index,
+        title: item.title || 'กิจกรรมแนะนำ',
+        category: item.category || 'แนะนำ',
+        city: item.city || city,
+        area: item.area || '',
+        description: item.description || '',
+        best_time: item.best_time || '',
+        image_query: item.image_query || item.title || city,
+        map_query: item.map_query || item.title || city,
+        added: false
+      }));
+    discoveryState.moreCount = (discoveryState.moreCount || 0) + 1;
+    if (!newItems.length) {
+      showToast('ยังไม่มีคำแนะนำเพิ่มเติมตอนนี้');
+    } else {
+      discoveryState.items = discoveryState.items.concat(newItems);
+      appendDiscoveryCards(newItems);
+    }
+    const existingEntry = loadCityEntry(city);
+    saveCityEntry(city, discoveryState.items, existingEntry?.fetchedAt, discoveryState.moreCount);
+  } catch (error) {
+    showToast(error.message || 'โหลดเพิ่มเติมไม่สำเร็จ');
+  } finally {
+    discoveryState.loadingMore = false;
+    renderDiscoveryLoadMoreState();
+  }
+}
+
+// Appends new cards/dots straight into the existing DOM (rather than a full re-render) so the
+// carousel the user is mid-scroll on doesn't jump back to the start. Falls back to a full
+// renderDiscovery() only for the rare case a section was empty before (its track doesn't exist
+// yet in the DOM to append into).
+function appendDiscoveryCards(newItems) {
+  const groups = [
+    ['shop', newItems.filter(isShoppingOrFoodItem)],
+    ['other', newItems.filter((item) => !isShoppingOrFoodItem(item))]
+  ].filter(([, items]) => items.length);
+  if (!groups.length) return;
+  const needsFullRender = groups.some(([groupId]) => !document.querySelector('[data-discovery-track="' + groupId + '"]'));
+  if (needsFullRender) { renderDiscovery(); return; }
+  groups.forEach(([groupId, items]) => {
+    const track = document.querySelector('[data-discovery-track="' + groupId + '"]');
+    const dotsContainer = document.querySelector('[data-discovery-dots="' + groupId + '"]');
+    const existingCount = dotsContainer.querySelectorAll('button').length;
+    track.insertAdjacentHTML('beforeend', items.map(discoveryCardMarkup).join(''));
+    dotsContainer.insertAdjacentHTML('beforeend', items.map((_, index) => `<button aria-label="การ์ดที่ ${existingCount + index + 1}"></button>`).join(''));
+    hydrateDiscoveryImages(track);
+  });
+}
+
+// Toggles a small busy state on the discovery tracks while a load-more fetch is in flight,
+// without touching scroll position (a full renderDiscovery() would reset it to 0).
+function renderDiscoveryLoadMoreState() {
+  document.querySelectorAll('.discovery-carousel').forEach((carousel) => {
+    carousel.classList.toggle('is-loading-more', discoveryState.loadingMore);
+  });
+}
+
+// Fires on every scroll of either carousel track; triggers loadMoreDiscovery() once the user is
+// within ~1 card-width of the end, so it feels like "scrolling to the end asks for more" rather
+// than needing a precise pixel-perfect drag past the boundary.
+function maybeLoadMoreDiscovery(track) {
+  if (discoveryState.loading || discoveryState.loadingMore) return;
+  if ((discoveryState.moreCount || 0) >= MAX_DISCOVERY_LOAD_MORE) return;
+  const threshold = Math.max(48, discoveryScrollStep(track) * 0.5);
+  const distanceFromEnd = track.scrollWidth - track.clientWidth - track.scrollLeft;
+  if (distanceFromEnd <= threshold) loadMoreDiscovery();
+}
+
 // Shared by both "open the Discover tab" and "tap a city chip": reuse that city's cache if it's
 // still fresh (within DISCOVERY_CACHE_TTL_MS), otherwise actually call Gemini.
 function loadCityFromCacheOrFetch(city) {
@@ -347,6 +447,7 @@ function loadCityFromCacheOrFetch(city) {
   if (isCacheFresh(cached)) {
     discoveryState.city = city;
     discoveryState.items = cached.items;
+    discoveryState.moreCount = cached.moreCount || 0;
     discoveryState.error = null;
     renderDiscovery();
     renderToday();
@@ -555,7 +656,10 @@ function renderDiscovery() {
     ${!key ? geminiSetupCard() : discoveryState.loading ? discoveryLoadingMarkup() : discoveryState.error ? discoveryErrorMarkup() : discoveryCarouselMarkup()}
   `;
   document.querySelectorAll('[data-discovery-track]').forEach((track) => {
-    track.addEventListener('scroll', () => updateDiscoveryDots(track), { passive: true });
+    track.addEventListener('scroll', () => {
+      updateDiscoveryDots(track);
+      maybeLoadMoreDiscovery(track);
+    }, { passive: true });
   });
   hydrateDiscoveryImages(view);
 }
