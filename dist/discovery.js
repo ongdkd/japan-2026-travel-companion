@@ -83,8 +83,8 @@ function mapUrlForSuggestion(item) {
   return 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(query);
 }
 
-function clearGeminiKeyIfInvalid(message) {
-  if (/api key not valid|api_key_invalid|permission denied/i.test(message || '')) clearGeminiKey();
+function isInvalidKeyMessage(message) {
+  return /api key not valid|api_key_invalid|permission denied/i.test(message || '');
 }
 
 function buildDiscoveryPrompt(city) {
@@ -134,7 +134,6 @@ async function callGemini(prompt) {
   if (!response.ok) {
     const detail = await response.json().catch(() => null);
     const message = detail?.error?.message || ('Gemini ตอบกลับรหัส ' + response.status);
-    clearGeminiKeyIfInvalid(message);
     throw new Error(message);
   }
   const payload = await response.json();
@@ -251,7 +250,19 @@ function discoveryLoadingMarkup() {
 }
 
 function discoveryErrorMarkup() {
-  return `<div class="empty-panel"><strong>ค้นหาไม่สำเร็จ</strong><p>${esc(discoveryState.error)}</p><button data-refresh-discovery>ลองอีกครั้ง</button></div>`;
+  const invalidKey = isInvalidKeyMessage(discoveryState.error);
+  const hint = invalidKey
+    ? 'ตรวจสอบว่าคัดลอก API Key มาครบทั้งบรรทัดและไม่มีช่องว่างเกิน หรือสร้าง Key ใหม่ที่ Google AI Studio'
+    : discoveryState.error;
+  return `
+    <div class="empty-panel">
+      <strong>${invalidKey ? 'API Key ไม่ถูกต้อง' : 'ค้นหาไม่สำเร็จ'}</strong>
+      <p>${esc(hint)}</p>
+      <div class="empty-panel__actions">
+        <button data-refresh-discovery>ลองอีกครั้ง</button>
+        <button data-forget-gemini-key>เปลี่ยน API Key</button>
+      </div>
+    </div>`;
 }
 
 function discoveryCarouselMarkup() {
@@ -349,6 +360,17 @@ document.addEventListener('click', async (event) => {
   const refresh = target.closest('[data-refresh-discovery]');
   if (refresh && !discoveryState.loading) {
     fetchDiscovery(discoveryState.city || activeDiscoveryCity());
+    return;
+  }
+
+  const forgetKey = target.closest('[data-forget-gemini-key]');
+  if (forgetKey) {
+    clearGeminiKey();
+    clearDiscoveryCache();
+    discoveryState.error = null;
+    discoveryState.items = [];
+    renderDiscovery();
+    renderToday();
     return;
   }
 
