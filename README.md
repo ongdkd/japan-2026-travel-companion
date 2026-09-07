@@ -1,1 +1,0 @@
-# japan-2026-travel-companion
