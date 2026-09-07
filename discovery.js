@@ -111,6 +111,10 @@ function isModelUnavailableMessage(message) {
   return /no longer available|not found for api|is not supported for|deprecated model|not found/i.test(message || '');
 }
 
+function isOverloadedMessage(message) {
+  return /overloaded|experiencing high demand|please try again later|resource_exhausted|try again later|503/i.test(message || '');
+}
+
 function getRememberedModel() {
   try { return localStorage.getItem(GEMINI_MODEL_STORAGE) || ''; } catch { return ''; }
 }
@@ -160,10 +164,11 @@ async function callGeminiModel(prompt, key, model) {
   return Array.isArray(parsed) ? parsed : [];
 }
 
-// Google renames/retires "flash" model ids often (we've hit this twice already). Try whichever
-// model last worked first, then walk the candidate list — only for "model unavailable"-shaped
-// errors, so a bad key or a real quota error still surfaces immediately instead of being masked
-// by three retries.
+// Google renames/retires "flash" model ids often (we've hit this twice already), and any single
+// model can also get temporarily overloaded ("experiencing high demand"). Try whichever model
+// last worked first, then walk the candidate list — only for "model unavailable" or "overloaded"
+// shaped errors, so a bad key or a real quota-on-your-account error still surfaces immediately
+// instead of being masked by three retries.
 async function callGemini(prompt) {
   const key = getGeminiKey();
   if (!key) throw new Error('ยังไม่ได้เชื่อม Gemini API Key');
@@ -173,11 +178,13 @@ async function callGemini(prompt) {
   for (const model of order) {
     try {
       const result = await callGeminiModel(prompt, key, model);
-      if (model !== remembered) rememberModel(model);
+      // Only pin this model as the new default when it replaced one that's permanently gone —
+      // a transient "overloaded" hiccup shouldn't make us abandon the preferred model for good.
+      if (model !== remembered && !isOverloadedMessage(lastError?.message)) rememberModel(model);
       return result;
     } catch (error) {
       lastError = error;
-      if (!isModelUnavailableMessage(error.message)) throw error;
+      if (!isModelUnavailableMessage(error.message) && !isOverloadedMessage(error.message)) throw error;
     }
   }
   throw lastError;
@@ -292,6 +299,7 @@ function discoveryLoadingMarkup() {
 function discoveryErrorMarkup() {
   const invalidKey = isInvalidKeyMessage(discoveryState.error);
   const authFormatIssue = !invalidKey && isAuthFormatIssueMessage(discoveryState.error);
+  const overloaded = !invalidKey && !authFormatIssue && isOverloadedMessage(discoveryState.error);
   let title = 'ค้นหาไม่สำเร็จ';
   let hint = discoveryState.error;
   if (invalidKey) {
@@ -300,6 +308,9 @@ function discoveryErrorMarkup() {
   } else if (authFormatIssue) {
     title = 'ปัญหาชั่วคราวจากฝั่ง Google';
     hint = 'Key ที่สร้างใหม่ตอนนี้บางบัญชีได้รูปแบบ "AQ." ซึ่ง Google ยังมีปัญหาใช้กับ Gemini API โดยตรง (ยังไม่มีวิธีแก้จาก Google ตอนนี้) ลองสร้าง Key จากโปรเจกต์เก่าที่เคยใช้งานได้ หรือรอ Google แก้ไข แล้วกด "ลองอีกครั้ง"';
+  } else if (overloaded) {
+    title = 'โมเดล AI กำลังมีคนใช้เยอะ';
+    hint = 'ระบบลองสลับไปโมเดลสำรองให้อัตโนมัติแล้ว แต่ตอนนี้ทุกโมเดลไม่ว่างพร้อมกัน มักเป็นแค่ชั่วคราว ลองกด "ลองอีกครั้ง" อีกสักครู่';
   }
   return `
     <div class="empty-panel">
