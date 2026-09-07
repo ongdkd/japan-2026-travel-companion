@@ -156,7 +156,8 @@ function buildDiscoveryPrompt(city) {
     'คุณเป็นผู้ช่วยแนะนำกิจกรรมท่องเที่ยวสำหรับนักท่องเที่ยวไทยที่กำลังเดินทางไปญี่ปุ่น',
     `ทริป: ${trip.name || 'Japan 2026'} ช่วงวันที่ ${trip.startDate || ''} ถึง ${trip.endDate || ''}`,
     `กำลังอยู่ที่หรือวางแผนอยู่ใกล้เมือง: ${city}, ประเทศญี่ปุ่น`,
-    'ช่วยแนะนำกิจกรรม สถานที่ เทศกาล หรืออีเวนต์ที่น่าสนใจจริงและเกี่ยวข้องกับช่วงเวลานี้ ใกล้เมืองนี้ ประมาณ 6 รายการ',
+    'ช่วยแนะนำกิจกรรม สถานที่ เทศกาล หรืออีเวนต์ที่น่าสนใจจริงและเกี่ยวข้องกับช่วงเวลานี้ ใกล้เมืองนี้ ประมาณ 10 รายการ',
+    'ต้องมีอย่างน้อย 3 รายการเป็นร้านอาหาร คาเฟ่ หรือของกินขึ้นชื่อ และอย่างน้อย 2 รายการเป็นห้างสรรพสินค้า ตลาด หรือแหล่งช้อปปิ้ง ที่เหลือเป็นเทศกาล ธรรมชาติ หรือสถานที่ท่องเที่ยวอื่น ๆ',
     'เน้นสิ่งที่เหมาะกับช่วงเดือนตุลาคม เช่น เทศกาลตามฤดูกาล ใบไม้เปลี่ยนสี ตลาดกลางคืน นิทรรศการ หรือจุดท่องเที่ยวที่คนไทยอาจไม่รู้จักมาก่อน',
     'ตอบเป็น JSON array เท่านั้น (ห้ามมีข้อความอื่นนอกเหนือ JSON) แต่ละรายการมีฟิลด์: title, category (หมวดสั้น ๆ ภาษาไทย เช่น เทศกาล, ธรรมชาติ, ช้อปปิ้ง, อาหาร), city, area, description (ภาษาไทย 1-2 ประโยค), best_time, image_query (คำค้นภาษาอังกฤษสั้น 2-4 คำ), map_query (ชื่อสถานที่ภาษาอังกฤษสำหรับค้นใน Google Maps)'
   ].join('\n');
@@ -261,7 +262,7 @@ async function fetchDiscovery(forceCity) {
   try {
     const raw = await callGemini(buildDiscoveryPrompt(city));
     const stamp = Date.now();
-    const items = raw.slice(0, 8).map((item, index) => ({
+    const items = raw.slice(0, 10).map((item, index) => ({
       id: 'sug_' + stamp + '_' + index,
       title: item.title || 'กิจกรรมแนะนำ',
       category: item.category || 'แนะนำ',
@@ -402,32 +403,55 @@ function discoveryErrorMarkup() {
     </div>`;
 }
 
+// Splits the single Gemini response into two groups client-side (rather than a second API call,
+// which the free-tier quota can't really afford) so shopping/food gets its own section above the
+// festivals/nature one, per the prompt's own request for a category mix.
+function isShoppingOrFoodItem(item) {
+  const text = [item.category, item.title].join(' ');
+  return /ช้อปปิ้ง|ห้าง|ตลาด|ร้านค้า|มอลล์|อาหาร|ร้านอาหาร|คาเฟ่|ของกิน|ขนม|shopping|mall|market|food|restaurant|caf[eé]/i.test(text);
+}
+
+function discoveryCardMarkup(item) {
+  return `
+    <article class="discovery-card">
+      <div class="discovery-card__media" data-img="${esc(imageUrlFor(item.image_query))}" data-img-fallback="${esc(fallbackImageUrlFor(item.image_query))}">
+        <span class="discovery-card__tag">${esc(item.category)}</span>
+      </div>
+      <div class="discovery-card__body">
+        <h3>${esc(item.title)}</h3>
+        <p class="discovery-card__meta">${esc([item.area, item.best_time].filter(Boolean).join(' · '))}</p>
+        <p class="discovery-card__desc">${esc(item.description)}</p>
+        <div class="discovery-card__actions">
+          <button class="discovery-card__map" data-url="${safeUrl(mapUrlForSuggestion(item))}">แผนที่</button>
+          <button class="discovery-card__add${item.added ? ' added' : ''}" data-add-suggestion="${item.id}"${item.added ? ' disabled' : ''}>${item.added ? 'เพิ่มแล้ว ✓' : '+ เพิ่มลงแผน'}</button>
+        </div>
+      </div>
+    </article>`;
+}
+
+function discoverySectionMarkup(groupId, title, items) {
+  if (!items.length) return '';
+  return `
+    <div class="section-heading discovery-section-heading"><h2>${esc(title)}</h2></div>
+    <div class="discovery-carousel">
+      <div class="discovery-track" data-discovery-track="${groupId}">
+        ${items.map(discoveryCardMarkup).join('')}
+      </div>
+    </div>
+    <div class="discovery-dots" data-discovery-dots="${groupId}">${items.map((_, index) => `<button class="${index === 0 ? 'active' : ''}" aria-label="การ์ดที่ ${index + 1}"></button>`).join('')}</div>
+  `;
+}
+
 function discoveryCarouselMarkup() {
   if (!discoveryState.items.length) {
     return `<div class="empty-panel"><strong>ยังไม่มีคำแนะนำ</strong><p>แตะปุ่มค้นหาเพื่อดูกิจกรรมใกล้ ${esc(discoveryState.city || '')}</p><button data-refresh-discovery>ค้นหาเลย</button></div>`;
   }
-  return `
-    <div class="discovery-carousel">
-      <div class="discovery-track" id="discovery-track">
-        ${discoveryState.items.map((item) => `
-          <article class="discovery-card">
-            <div class="discovery-card__media" data-img="${esc(imageUrlFor(item.image_query))}" data-img-fallback="${esc(fallbackImageUrlFor(item.image_query))}">
-              <span class="discovery-card__tag">${esc(item.category)}</span>
-            </div>
-            <div class="discovery-card__body">
-              <h3>${esc(item.title)}</h3>
-              <p class="discovery-card__meta">${esc([item.area, item.best_time].filter(Boolean).join(' · '))}</p>
-              <p class="discovery-card__desc">${esc(item.description)}</p>
-              <div class="discovery-card__actions">
-                <button class="discovery-card__map" data-url="${safeUrl(mapUrlForSuggestion(item))}">แผนที่</button>
-                <button class="discovery-card__add${item.added ? ' added' : ''}" data-add-suggestion="${item.id}"${item.added ? ' disabled' : ''}>${item.added ? 'เพิ่มแล้ว ✓' : '+ เพิ่มลงแผน'}</button>
-              </div>
-            </div>
-          </article>`).join('')}
-      </div>
-    </div>
-    <div class="discovery-dots" id="discovery-dots">${discoveryState.items.map((_, index) => `<button class="${index === 0 ? 'active' : ''}" aria-label="การ์ดที่ ${index + 1}"></button>`).join('')}</div>
-  `;
+  const shopFood = discoveryState.items.filter(isShoppingOrFoodItem);
+  const others = discoveryState.items.filter((item) => !isShoppingOrFoodItem(item));
+  return (
+    discoverySectionMarkup('shop', 'ช้อปปิ้ง & ของกินแนะนำ', shopFood) +
+    discoverySectionMarkup('other', others.length && shopFood.length ? 'เทศกาลและธรรมชาติแนะนำ' : 'กิจกรรมแนะนำ', others)
+  );
 }
 
 // Each card is only ~82% of the track's width (so the next one peeks in), not 100% — dividing
@@ -441,8 +465,11 @@ function discoveryScrollStep(track) {
   return firstCard.getBoundingClientRect().width + gap;
 }
 
+// There can now be two independent carousels on screen (shopping/food + festivals/nature), each
+// with its own track and dot row matched by a shared data-discovery-track/-dots group id.
 function updateDiscoveryDots(track) {
-  const dots = document.querySelectorAll('#discovery-dots button');
+  const groupId = track.dataset.discoveryTrack;
+  const dots = document.querySelectorAll('[data-discovery-dots="' + groupId + '"] button');
   const step = discoveryScrollStep(track);
   if (!dots.length || !step) return;
   const index = Math.round(track.scrollLeft / step);
@@ -469,8 +496,9 @@ function renderDiscovery() {
     ${key ? `<div class="filter-row">${cities.map((c) => `<button class="${city === c ? 'active' : ''}" data-discovery-city="${c}">${c}</button>`).join('')}</div>` : ''}
     ${!key ? geminiSetupCard() : discoveryState.loading ? discoveryLoadingMarkup() : discoveryState.error ? discoveryErrorMarkup() : discoveryCarouselMarkup()}
   `;
-  const track = document.querySelector('#discovery-track');
-  if (track) track.addEventListener('scroll', () => updateDiscoveryDots(track), { passive: true });
+  document.querySelectorAll('[data-discovery-track]').forEach((track) => {
+    track.addEventListener('scroll', () => updateDiscoveryDots(track), { passive: true });
+  });
   hydrateDiscoveryImages(view);
 }
 
@@ -516,10 +544,12 @@ document.addEventListener('click', async (event) => {
     return;
   }
 
-  const dot = target.closest('#discovery-dots button');
+  const dot = target.closest('[data-discovery-dots] button');
   if (dot) {
-    const track = document.querySelector('#discovery-track');
-    const dots = Array.from(document.querySelectorAll('#discovery-dots button'));
+    const dotsContainer = dot.closest('[data-discovery-dots]');
+    const groupId = dotsContainer.dataset.discoveryDots;
+    const track = document.querySelector('[data-discovery-track="' + groupId + '"]');
+    const dots = Array.from(dotsContainer.querySelectorAll('button'));
     const index = dots.indexOf(dot);
     if (track && index >= 0) scrollDiscoveryToIndex(track, index);
     return;
