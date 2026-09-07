@@ -7,8 +7,12 @@
 // the order these files are written in.
 
 const GEMINI_KEY_STORAGE = 'japan2026.geminiKey';
+const GEMINI_MODEL_STORAGE = 'japan2026.geminiModel';
 const DISCOVERY_CACHE_STORAGE = 'japan2026.discovery.v1';
-const GEMINI_MODEL = 'gemini-2.5-flash';
+// Google renames/retires "flash" model ids fairly often. Try the newest first, then fall back
+// to older ones automatically — whichever one actually works gets remembered so later calls
+// go straight to it instead of re-probing every time.
+const GEMINI_MODEL_CANDIDATES = ['gemini-3.8-flash', 'gemini-flash-latest', 'gemini-2.5-flash'];
 const DISCOVERY_CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
 
 const discoveryState = {
@@ -99,10 +103,19 @@ function buildDiscoveryPrompt(city) {
   ].join('\n');
 }
 
-async function callGemini(prompt) {
-  const key = getGeminiKey();
-  if (!key) throw new Error('ยังไม่ได้เชื่อม Gemini API Key');
-  const endpoint = 'https://generativelanguage.googleapis.com/v1beta/models/' + GEMINI_MODEL + ':generateContent?key=' + encodeURIComponent(key);
+function isModelUnavailableMessage(message) {
+  return /no longer available|not found for api|is not supported for|deprecated model|not found/i.test(message || '');
+}
+
+function getRememberedModel() {
+  try { return localStorage.getItem(GEMINI_MODEL_STORAGE) || ''; } catch { return ''; }
+}
+function rememberModel(model) {
+  try { localStorage.setItem(GEMINI_MODEL_STORAGE, model); } catch { /* ignore */ }
+}
+
+async function callGeminiModel(prompt, key, model) {
+  const endpoint = 'https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent?key=' + encodeURIComponent(key);
   const body = {
     contents: [{ role: 'user', parts: [{ text: prompt }] }],
     generationConfig: {
@@ -141,6 +154,29 @@ async function callGemini(prompt) {
   let parsed;
   try { parsed = JSON.parse(text); } catch { throw new Error('อ่านผลลัพธ์จาก Gemini ไม่สำเร็จ'); }
   return Array.isArray(parsed) ? parsed : [];
+}
+
+// Google renames/retires "flash" model ids often (we've hit this twice already). Try whichever
+// model last worked first, then walk the candidate list — only for "model unavailable"-shaped
+// errors, so a bad key or a real quota error still surfaces immediately instead of being masked
+// by three retries.
+async function callGemini(prompt) {
+  const key = getGeminiKey();
+  if (!key) throw new Error('ยังไม่ได้เชื่อม Gemini API Key');
+  const remembered = getRememberedModel();
+  const order = [remembered, ...GEMINI_MODEL_CANDIDATES].filter((model, index, all) => model && all.indexOf(model) === index);
+  let lastError;
+  for (const model of order) {
+    try {
+      const result = await callGeminiModel(prompt, key, model);
+      if (model !== remembered) rememberModel(model);
+      return result;
+    } catch (error) {
+      lastError = error;
+      if (!isModelUnavailableMessage(error.message)) throw error;
+    }
+  }
+  throw lastError;
 }
 
 async function fetchDiscovery(forceCity) {
