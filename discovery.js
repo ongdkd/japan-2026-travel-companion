@@ -12,7 +12,11 @@ const DISCOVERY_CACHE_STORAGE = 'japan2026.discovery.v1';
 // Google renames/retires "flash" model ids fairly often. Try the newest first, then fall back
 // to older ones automatically — whichever one actually works gets remembered so later calls
 // go straight to it instead of re-probing every time.
-const GEMINI_MODEL_CANDIDATES = ['gemini-3.8-flash', 'gemini-flash-latest', 'gemini-2.5-flash'];
+// Confirmed against the account's own AI Studio quota dashboard: these three are real, separate
+// models with independent RPM/RPD quota (unlike a "-latest" alias, which may just point at
+// whichever of these is already exhausted). gemini-2.5-flash is retired for new users — never
+// add it back, Google returns a hard "no longer available" error for it now.
+const GEMINI_MODEL_CANDIDATES = ['gemini-3.8-flash', 'gemini-3.5-flash', 'gemini-3.1-flash-lite'];
 const DISCOVERY_CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
 
 const discoveryState = {
@@ -115,6 +119,10 @@ function isOverloadedMessage(message) {
   return /overloaded|experiencing high demand|please try again later|resource_exhausted|try again later|503/i.test(message || '');
 }
 
+function isQuotaExceededMessage(message) {
+  return /exceeded your current quota|quota exceeded|rate limit|check your plan and billing/i.test(message || '');
+}
+
 function getRememberedModel() {
   try { return localStorage.getItem(GEMINI_MODEL_STORAGE) || ''; } catch { return ''; }
 }
@@ -179,12 +187,15 @@ async function callGemini(prompt) {
     try {
       const result = await callGeminiModel(prompt, key, model);
       // Only pin this model as the new default when it replaced one that's permanently gone —
-      // a transient "overloaded" hiccup shouldn't make us abandon the preferred model for good.
-      if (model !== remembered && !isOverloadedMessage(lastError?.message)) rememberModel(model);
+      // a transient "overloaded" or "quota" hiccup shouldn't make us abandon the preferred model
+      // for good, since both usually clear up on their own.
+      const lastWasTransient = isOverloadedMessage(lastError?.message) || isQuotaExceededMessage(lastError?.message);
+      if (model !== remembered && !lastWasTransient) rememberModel(model);
       return result;
     } catch (error) {
       lastError = error;
-      if (!isModelUnavailableMessage(error.message) && !isOverloadedMessage(error.message)) throw error;
+      const canFallBack = isModelUnavailableMessage(error.message) || isOverloadedMessage(error.message) || isQuotaExceededMessage(error.message);
+      if (!canFallBack) throw error;
     }
   }
   throw lastError;
@@ -300,6 +311,7 @@ function discoveryErrorMarkup() {
   const invalidKey = isInvalidKeyMessage(discoveryState.error);
   const authFormatIssue = !invalidKey && isAuthFormatIssueMessage(discoveryState.error);
   const overloaded = !invalidKey && !authFormatIssue && isOverloadedMessage(discoveryState.error);
+  const quotaExceeded = !invalidKey && !authFormatIssue && !overloaded && isQuotaExceededMessage(discoveryState.error);
   let title = 'ค้นหาไม่สำเร็จ';
   let hint = discoveryState.error;
   if (invalidKey) {
@@ -311,6 +323,9 @@ function discoveryErrorMarkup() {
   } else if (overloaded) {
     title = 'โมเดล AI กำลังมีคนใช้เยอะ';
     hint = 'ระบบลองสลับไปโมเดลสำรองให้อัตโนมัติแล้ว แต่ตอนนี้ทุกโมเดลไม่ว่างพร้อมกัน มักเป็นแค่ชั่วคราว ลองกด "ลองอีกครั้ง" อีกสักครู่';
+  } else if (quotaExceeded) {
+    title = 'ใช้โควต้าฟรีของ Gemini ครบแล้ว';
+    hint = 'ระบบลองสลับโมเดลสำรองให้แล้วแต่โควต้าฟรีเต็มทุกตัวในตอนนี้ โควต้าฟรีจะรีเซ็ตให้ใหม่ (ปกติทุกวัน/ทุกนาทีตามชนิดโควต้า) ลองใหม่อีกครั้งภายหลัง';
   }
   return `
     <div class="empty-panel">
