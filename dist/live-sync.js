@@ -308,6 +308,7 @@
       Food_ID: id, Video_ID: id,
       Place_Name: detected.name, Place: detected.name, Name: detected.name, Title: detected.name,
       Video_Name: detected.name, Video_Title: detected.name,
+      Thumbnail_URL: detected.thumbnailUrl, Thumbnail: detected.thumbnailUrl,
       Platform: detected.platform, Link: detected.url, URL: detected.url,
       Category: detected.category, Area: detected.area, City: detected.city,
       Address: detected.address, Latitude: detected.latitude, Longitude: detected.longitude,

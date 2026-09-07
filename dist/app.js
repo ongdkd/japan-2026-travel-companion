@@ -633,7 +633,12 @@ function openResource(key) {
   } else if (key === 'wishlist') {
     content = resourceList(DATA.wishlist, 'Item', 'Store', 'Expected_Price', 'Wishlist_ID');
   } else if (key === 'videos') {
-    content = quickAddPanel('videos') + (resourceList(DATA.videos, 'Place', 'Platform', 'Note', 'Video_ID', 'Link') || '<div class="empty-panel"><strong>ยังไม่มีวิดีโอที่บันทึก</strong><p>รองรับ TikTok, YouTube และ Instagram</p></div>');
+    const videos = DATA.videos || [];
+    const shorts = videos.filter(isVideoShortItem);
+    const normal = videos.filter((item) => !isVideoShortItem(item));
+    content = quickAddPanel('videos') + videoShortsRowMarkup(shorts) +
+      (normal.length ? `<div class="section-heading discovery-section-heading"><h2>วิดีโอปกติ</h2></div>${resourceList(normal, 'Place', 'Platform', 'Note', 'Video_ID', 'Link')}` : '') +
+      (!videos.length ? '<div class="empty-panel"><strong>ยังไม่มีวิดีโอที่บันทึก</strong><p>รองรับ TikTok, YouTube และ Instagram</p></div>' : '');
   } else if (key === 'documents') {
     content = (DATA.documents || []).map((item) => detailCard(item.Document_Type || item.Document || item.Name, item.Traveler || item.Owner, item.Expiry ? `หมดอายุ ${item.Expiry}` : item.Status, '▣', safeUrl(item.File_Link || item.Link) !== '#' ? `<div class="resource-actions"><button data-url="${safeUrl(item.File_Link || item.Link)}">เปิดไฟล์ที่จำกัดสิทธิ์ ↗</button></div>` : '')).join('');
   } else if (key === 'contacts') {
@@ -647,6 +652,216 @@ function openResource(key) {
   detailView.hidden = false;
   document.querySelector('.bottom-nav').classList.add('behind-detail');
   detailView.scrollTop = 0;
+}
+
+// Shorts don't carry an explicit "is this short-form" column in the sheet, so this guesses from
+// what's already there: an explicit Duration wins when present (lets you override per-row by just
+// filling that column in), otherwise a /shorts/ or /reel/ URL is a dead giveaway, otherwise TikTok
+// and Instagram links default to short-form since that's nearly always what gets saved from them.
+function isVideoShortItem(item) {
+  const url = String(item.Link || item.URL || '').toLowerCase();
+  if (/\/shorts\//.test(url) || /\/reels?\//.test(url)) return true;
+  const duration = parseFloat(item.Duration_Min ?? item.Duration ?? item.Length_Min ?? item.Length);
+  if (Number.isFinite(duration)) return duration <= 5;
+  const platform = String(item.Platform || '').toLowerCase();
+  return platform === 'tiktok' || platform === 'instagram';
+}
+
+function videoTitleFor(item) {
+  return item.Place || item.Video_Name || item.Video_Title || item.Place_Name || item.Title || item.Name || item.Item || item.Video_ID;
+}
+
+function videoShortCardMarkup(item, index) {
+  const title = videoTitleFor(item);
+  const thumb = safeUrl(item.Thumbnail_URL || item.Thumbnail || '');
+  return `
+    <article class="video-short-card" data-open-short="${index}">
+      <div class="video-short-card__media"${thumb !== '#' ? ` style="background-image:url('${esc(thumb)}')"` : ''}>
+        <span class="video-short-card__icon">▶</span>
+        <span class="video-short-card__tag">${esc(item.Platform || '')}</span>
+      </div>
+      <p class="video-short-card__title">${esc(title)}</p>
+    </article>`;
+}
+
+function videoShortsRowMarkup(items) {
+  if (!items.length) return '';
+  return `
+    <div class="section-heading discovery-section-heading"><h2>Shorts</h2></div>
+    <div class="video-shorts-row">${items.map((item, index) => videoShortCardMarkup(item, index)).join('')}</div>`;
+}
+
+// --- Shorts feed: full-screen vertical scroll-snap player -----------------------------------
+// Tapping a Shorts tile opens this instead of leaving the app: a CSS scroll-snap column of
+// full-height sections, one per saved short, that behaves like a native swipe feed. YouTube gets
+// real autoplay/pause/mute via its postMessage IFrame API as each section crosses into view;
+// TikTok and Instagram only offer official oEmbed widgets with no scriptable playback control, so
+// those stay tap-to-play inside their own embed — still fully in-app, just not auto-playing.
+// Only the current section +/- 1 is ever mounted with a live embed, to keep memory/battery sane.
+const shortsFeedState = { items: [], index: 0, mounted: new Set(), observer: null };
+
+function extractYouTubeId(url) {
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.replace(/^www\./, '');
+    if (host === 'youtu.be') return parsed.pathname.slice(1).split('/')[0] || '';
+    if (/(^|\.)youtube\.com$/.test(host)) {
+      if (parsed.searchParams.get('v')) return parsed.searchParams.get('v');
+      const match = parsed.pathname.match(/\/(shorts|embed)\/([^/?]+)/);
+      if (match) return match[2];
+    }
+  } catch { /* not a valid URL */ }
+  return '';
+}
+
+function extractTikTokVideoId(url) {
+  const match = String(url || '').match(/\/video\/(\d+)/);
+  return match ? match[1] : '';
+}
+
+function shortEmbedKind(item) {
+  const url = String(item.Link || item.URL || '');
+  const platform = String(item.Platform || '').toLowerCase();
+  if (/youtube\.com|youtu\.be/i.test(url)) return 'youtube';
+  if (/tiktok\.com/i.test(url) || platform === 'tiktok') return 'tiktok';
+  if (/instagram\.com/i.test(url) || platform === 'instagram') return 'instagram';
+  return 'link';
+}
+
+function shortsFallbackMarkup(item) {
+  const url = safeUrl(item.Link || item.URL || item.Google_Maps_URL);
+  return `<div class="shorts-feed__fallback"><p>วิดีโอนี้เปิดดูในแอปต้นทางได้เลย</p>${url !== '#' ? `<button data-url="${url}">เปิด ↗</button>` : ''}</div>`;
+}
+
+function shortsEmbedMarkup(item) {
+  const url = item.Link || item.URL || '';
+  const kind = shortEmbedKind(item);
+  if (kind === 'youtube') {
+    const id = extractYouTubeId(url);
+    if (!id) return shortsFallbackMarkup(item);
+    return `<iframe src="https://www.youtube.com/embed/${esc(id)}?playsinline=1&modestbranding=1&rel=0&enablejsapi=1&mute=1" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen loading="lazy" data-yt-frame></iframe>`;
+  }
+  if (kind === 'tiktok') {
+    const videoId = extractTikTokVideoId(url);
+    return `<blockquote class="tiktok-embed" cite="${esc(url)}"${videoId ? ` data-video-id="${esc(videoId)}"` : ''} style="max-width:325px;min-width:280px"><section></section></blockquote>`;
+  }
+  if (kind === 'instagram') {
+    return `<blockquote class="instagram-media" data-instgrm-permalink="${esc(url)}" data-instgrm-version="14" style="max-width:400px;min-width:280px"></blockquote>`;
+  }
+  return shortsFallbackMarkup(item);
+}
+
+function shortsFeedSectionMarkup(item, index) {
+  return `
+    <section class="shorts-feed__section" data-shorts-index="${index}">
+      <div class="shorts-feed__embed" data-shorts-embed-slot></div>
+      <div class="shorts-feed__caption"><strong>${esc(videoTitleFor(item))}</strong><span>${esc(item.Platform || '')}</span></div>
+    </section>`;
+}
+
+function ensureTikTokEmbedScript() {
+  reloadEmbedScript('https://www.tiktok.com/embed.js', 'tiktokEmbed');
+}
+
+function ensureInstagramEmbedScript() {
+  if (window.instgrm?.Embeds?.process) { window.instgrm.Embeds.process(); return; }
+  reloadEmbedScript('https://www.instagram.com/embed.js', 'instagramEmbed');
+}
+
+// Both TikTok's and Instagram's embed.js scan the DOM for un-rendered blockquotes on load. Their
+// own mutation-watching for LATER dynamically-inserted blockquotes is inconsistent across
+// versions, so the reliable cross-version trick is to reload the script tag itself whenever new
+// blockquotes are added — that forces a fresh full-DOM scan.
+function reloadEmbedScript(src, marker) {
+  const existing = document.querySelector('script[data-' + marker + ']');
+  if (existing) existing.remove();
+  const script = document.createElement('script');
+  script.src = src;
+  script.async = true;
+  script.dataset[marker] = '1';
+  document.body.appendChild(script);
+}
+
+function postYouTubeCommand(iframe, func) {
+  try { iframe?.contentWindow?.postMessage(JSON.stringify({ event: 'command', func, args: [] }), '*'); } catch { /* ignore */ }
+}
+
+function playShortsFeedVideo(index) {
+  const iframe = document.querySelector('.shorts-feed__section[data-shorts-index="' + index + '"] [data-yt-frame]');
+  if (iframe) { postYouTubeCommand(iframe, 'unMute'); postYouTubeCommand(iframe, 'playVideo'); }
+}
+
+function pauseShortsFeedVideo(index) {
+  const iframe = document.querySelector('.shorts-feed__section[data-shorts-index="' + index + '"] [data-yt-frame]');
+  if (iframe) postYouTubeCommand(iframe, 'pauseVideo');
+}
+
+// Mounts a live embed only for `index` and its immediate neighbors, unmounting anything that
+// falls outside that window — keeps at most 3 iframes/widgets alive at once regardless of how
+// many Shorts are saved.
+function mountShortsFeedAround(index) {
+  const view = document.querySelector('#shorts-feed-view');
+  if (!view) return;
+  const items = shortsFeedState.items;
+  const keep = new Set([index - 1, index, index + 1].filter((i) => i >= 0 && i < items.length));
+  let mountedNew = false;
+  view.querySelectorAll('.shorts-feed__section').forEach((section) => {
+    const i = Number(section.dataset.shortsIndex);
+    const slot = section.querySelector('[data-shorts-embed-slot]');
+    if (!slot) return;
+    if (keep.has(i) && !shortsFeedState.mounted.has(i)) {
+      slot.innerHTML = shortsEmbedMarkup(items[i]);
+      shortsFeedState.mounted.add(i);
+      mountedNew = true;
+    } else if (!keep.has(i) && shortsFeedState.mounted.has(i)) {
+      slot.innerHTML = '';
+      shortsFeedState.mounted.delete(i);
+    }
+  });
+  if (mountedNew) { ensureTikTokEmbedScript(); ensureInstagramEmbedScript(); }
+}
+
+function closeShortsFeed() {
+  shortsFeedState.observer?.disconnect();
+  shortsFeedState.observer = null;
+  shortsFeedState.items = [];
+  shortsFeedState.mounted = new Set();
+  document.querySelector('#shorts-feed-view')?.remove();
+  document.body.style.overflow = '';
+}
+
+function openShortsFeed(items, startIndex) {
+  if (!items.length) return;
+  closeShortsFeed();
+  shortsFeedState.items = items;
+  shortsFeedState.index = Math.max(0, Math.min(startIndex, items.length - 1));
+  document.body.style.overflow = 'hidden';
+  const view = document.createElement('div');
+  view.id = 'shorts-feed-view';
+  view.className = 'shorts-feed-view';
+  view.innerHTML = `
+    <button class="shorts-feed__close" data-close-shorts-feed aria-label="ปิด">×</button>
+    <div class="shorts-feed__scroller">${items.map(shortsFeedSectionMarkup).join('')}</div>`;
+  document.body.appendChild(view);
+  const sections = Array.from(view.querySelectorAll('.shorts-feed__section'));
+  sections[shortsFeedState.index]?.scrollIntoView({ block: 'start' });
+  mountShortsFeedAround(shortsFeedState.index);
+  playShortsFeedVideo(shortsFeedState.index);
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach((entry) => {
+      const index = Number(entry.target.dataset.shortsIndex);
+      if (entry.isIntersecting && entry.intersectionRatio >= 0.6) {
+        if (shortsFeedState.index !== index) pauseShortsFeedVideo(shortsFeedState.index);
+        shortsFeedState.index = index;
+        mountShortsFeedAround(index);
+        playShortsFeedVideo(index);
+      } else if (!entry.isIntersecting) {
+        pauseShortsFeedVideo(index);
+      }
+    });
+  }, { root: view.querySelector('.shorts-feed__scroller'), threshold: [0, 0.6] });
+  sections.forEach((section) => observer.observe(section));
+  shortsFeedState.observer = observer;
 }
 
 function resourceList(rows = [], titleKey, subtitleKey, metaKey, idKey, linkKey) {
@@ -865,6 +1080,7 @@ async function analyzeSharedLink(rawUrl, kind) {
     latitude: coords?.[1] || geocoded?.latitude || '', longitude: coords?.[2] || geocoded?.longitude || '', address: geocoded?.address || '',
     googleMapsUrl: existingPlace?.Google_Maps_URL || '', relatedPlaceId: existingPlace?._id || '',
     priority: 'Saved', status: 'Saved',
+    thumbnailUrl: meta.thumbnail_url || '',
     note: `เพิ่มจาก ${platform} โดยอัตโนมัติ${meta.author_name ? ' · ' + meta.author_name : ''}`
   };
 }
@@ -1063,6 +1279,16 @@ document.addEventListener('click', async (event) => {
   if (target.closest('[data-close-detail]')) {
     detailView.hidden = true;
     document.querySelector('.bottom-nav').classList.remove('behind-detail');
+    return;
+  }
+  const shortTile = target.closest('[data-open-short]');
+  if (shortTile) {
+    const items = (DATA.videos || []).filter(isVideoShortItem);
+    openShortsFeed(items, Number(shortTile.dataset.openShort));
+    return;
+  }
+  if (target.closest('[data-close-shorts-feed]')) {
+    closeShortsFeed();
     return;
   }
   const urlButton = target.closest('[data-url]');
