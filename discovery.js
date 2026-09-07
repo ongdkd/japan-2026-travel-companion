@@ -210,18 +210,29 @@ function isAuthFormatIssueMessage(message) {
   return /oauth 2 access token|access_token_type_unsupported|invalid authentication credentials/i.test(message || '');
 }
 
-function buildDiscoveryPrompt(city, excludeTitles) {
+// `focus` narrows a load-more request to just one carousel's category, so scrolling the
+// shopping/food track to the end doesn't also pad out the festival/nature track (and vice versa).
+function buildDiscoveryPrompt(city, options = {}) {
+  const { excludeTitles, focus } = options;
   const trip = DATA.trip || {};
   const lines = [
     'คุณเป็นเพื่อนสายเที่ยวที่รู้ลึกเรื่องที่เที่ยว/ที่กิน/ที่ช้อปสายฮิปในญี่ปุ่น กำลังแนะนำที่เที่ยวให้เพื่อนคนไทยวัย Gen Z (ประมาณ 18-27 ปี) ที่กำลังเดินทางไปญี่ปุ่น',
     `ทริป: ${trip.name || 'Japan 2026'} ช่วงวันที่ ${trip.startDate || ''} ถึง ${trip.endDate || ''}`,
-    `กำลังอยู่ที่หรือวางแผนอยู่ใกล้เมือง: ${city}, ประเทศญี่ปุ่น`,
-    'ช่วยแนะนำกิจกรรม สถานที่ เทศกาล หรืออีเวนต์ที่น่าสนใจจริงและเกี่ยวข้องกับช่วงเวลานี้ ใกล้เมืองนี้ ประมาณ 10 รายการ',
-    'เลือกที่ที่ถูกจริตสาย Gen Z: ถ่ายรูปลงโซเชียลได้สวย (aesthetic/instagrammable), กำลังเป็นกระแสใน TikTok/IG, คาเฟ่ธีมเก๋ ๆ, ร้านของกินที่กำลังไวรัล, ตลาดนัด/ตลาดกลางคืนสายชิล, ร้านมือสอง/วินเทจ, ป็อปอัพสโตร์, สตรีทอาร์ต, จุดถ่ายรูปลับที่คนไทยอาจไม่รู้จัก — เน้นสิ่งเหล่านี้มากกว่าสถานที่ท่องเที่ยวแบบดั้งเดิมที่ใคร ๆ ก็รู้จัก',
-    'ต้องมีอย่างน้อย 3 รายการเป็นร้านอาหาร คาเฟ่ หรือของกินที่กำลังฮิต และอย่างน้อย 2 รายการเป็นห้างสรรพสินค้า ตลาด หรือแหล่งช้อปปิ้งสายเทรนด์ ที่เหลือเป็นเทศกาล ธรรมชาติ หรือสถานที่ท่องเที่ยวอื่น ๆ ที่มีมุมถ่ายรูปเก๋',
-    'เน้นสิ่งที่เหมาะกับช่วงเดือนตุลาคม เช่น เทศกาลตามฤดูกาล ใบไม้เปลี่ยนสี ตลาดกลางคืน นิทรรศการ หรือจุดท่องเที่ยวที่คนไทยอาจไม่รู้จักมาก่อน',
-    'เขียน description ด้วยโทนเป็นกันเองแบบเพื่อนคุยกัน สนุก กระชับ ใช้สแลงไทยร่วมสมัยได้พอประมาณ (ไม่ทางการ ไม่เวิ่นเว้อ) แต่ยังให้ข้อมูลที่เป็นประโยชน์จริง'
+    `กำลังอยู่ที่หรือวางแผนอยู่ใกล้เมือง: ${city}, ประเทศญี่ปุ่น`
   ];
+  if (focus === 'shop') {
+    lines.push('รอบนี้ขอเฉพาะร้านอาหาร คาเฟ่ ของกินที่กำลังฮิต ห้างสรรพสินค้า ตลาด หรือแหล่งช้อปปิ้งสายเทรนด์เท่านั้น (ไม่เอาเทศกาลหรือธรรมชาติ) ประมาณ 8 รายการ');
+  } else if (focus === 'other') {
+    lines.push('รอบนี้ขอเฉพาะเทศกาล ธรรมชาติ หรือสถานที่ท่องเที่ยวอื่น ๆ ที่มีมุมถ่ายรูปเก๋เท่านั้น (ไม่เอาร้านอาหาร คาเฟ่ ห้าง หรือตลาด) ประมาณ 8 รายการ');
+  } else {
+    lines.push('ช่วยแนะนำกิจกรรม สถานที่ เทศกาล หรืออีเวนต์ที่น่าสนใจจริงและเกี่ยวข้องกับช่วงเวลานี้ ใกล้เมืองนี้ ประมาณ 10 รายการ');
+  }
+  lines.push('เลือกที่ที่ถูกจริตสาย Gen Z: ถ่ายรูปลงโซเชียลได้สวย (aesthetic/instagrammable), กำลังเป็นกระแสใน TikTok/IG, คาเฟ่ธีมเก๋ ๆ, ร้านของกินที่กำลังไวรัล, ตลาดนัด/ตลาดกลางคืนสายชิล, ร้านมือสอง/วินเทจ, ป็อปอัพสโตร์, สตรีทอาร์ต, จุดถ่ายรูปลับที่คนไทยอาจไม่รู้จัก — เน้นสิ่งเหล่านี้มากกว่าสถานที่ท่องเที่ยวแบบดั้งเดิมที่ใคร ๆ ก็รู้จัก');
+  if (!focus) {
+    lines.push('ต้องมีอย่างน้อย 3 รายการเป็นร้านอาหาร คาเฟ่ หรือของกินที่กำลังฮิต และอย่างน้อย 2 รายการเป็นห้างสรรพสินค้า ตลาด หรือแหล่งช้อปปิ้งสายเทรนด์ ที่เหลือเป็นเทศกาล ธรรมชาติ หรือสถานที่ท่องเที่ยวอื่น ๆ ที่มีมุมถ่ายรูปเก๋');
+  }
+  lines.push('เน้นสิ่งที่เหมาะกับช่วงเดือนตุลาคม เช่น เทศกาลตามฤดูกาล ใบไม้เปลี่ยนสี ตลาดกลางคืน นิทรรศการ หรือจุดท่องเที่ยวที่คนไทยอาจไม่รู้จักมาก่อน');
+  lines.push('เขียน description ด้วยโทนเป็นกันเองแบบเพื่อนคุยกัน สนุก กระชับ ใช้สแลงไทยร่วมสมัยได้พอประมาณ (ไม่ทางการ ไม่เวิ่นเว้อ) แต่ยังให้ข้อมูลที่เป็นประโยชน์จริง');
   if (excludeTitles && excludeTitles.length) {
     lines.push('ห้ามแนะนำที่ซ้ำหรือคล้ายกับรายการที่เคยแนะนำไปแล้วนี้ ขอเป็นที่ใหม่ล้วน: ' + excludeTitles.join(', '));
   }
@@ -352,24 +363,26 @@ async function fetchDiscovery(forceCity) {
   }
 }
 
-// Reaching the last card of either carousel calls this automatically: fetch one more batch
-// (telling Gemini what's already shown so it doesn't repeat itself) and splice the new items into
-// whichever section(s) they belong in, without resetting anyone's scroll position.
-async function loadMoreDiscovery() {
+// Reaching the last card of ONE carousel calls this with just that group's id ('shop' or
+// 'other') — only that track grows. The request is focused to that category (buildDiscoveryPrompt
+// focus) and results are filtered again client-side as a safety net, so scrolling shopping/food to
+// the end never quietly pads out the festival/nature track (or vice versa).
+async function loadMoreDiscovery(groupId) {
   if (discoveryState.loading || discoveryState.loadingMore) return;
   if ((discoveryState.moreCount || 0) >= MAX_DISCOVERY_LOAD_MORE) return;
   if (!getGeminiKey() || !discoveryState.items.length) return;
   const city = discoveryState.city || activeDiscoveryCity();
-  discoveryState.loadingMore = true;
+  discoveryState.loadingMore = groupId;
   renderDiscoveryLoadMoreState();
   try {
     const existingTitles = discoveryState.items.map((item) => item.title).filter(Boolean);
-    const raw = await callGemini(buildDiscoveryPrompt(city, existingTitles));
+    const raw = await callGemini(buildDiscoveryPrompt(city, { excludeTitles: existingTitles, focus: groupId }));
     const stamp = Date.now();
     const seen = new Set(existingTitles.map((title) => title.toLowerCase().trim()));
+    const matchesGroup = (item) => (groupId === 'shop' ? isShoppingOrFoodItem(item) : !isShoppingOrFoodItem(item));
     const newItems = raw
-      .filter((item) => item.title && !seen.has(String(item.title).toLowerCase().trim()))
-      .slice(0, 10)
+      .filter((item) => item.title && !seen.has(String(item.title).toLowerCase().trim()) && matchesGroup(item))
+      .slice(0, 8)
       .map((item, index) => ({
         id: 'sug_' + stamp + '_' + index,
         title: item.title || 'กิจกรรมแนะนำ',
@@ -387,7 +400,7 @@ async function loadMoreDiscovery() {
       showToast('ยังไม่มีคำแนะนำเพิ่มเติมตอนนี้');
     } else {
       discoveryState.items = discoveryState.items.concat(newItems);
-      appendDiscoveryCards(newItems);
+      appendDiscoveryCardsToGroup(groupId, newItems);
     }
     const existingEntry = loadCityEntry(city);
     saveCityEntry(city, discoveryState.items, existingEntry?.fetchedAt, discoveryState.moreCount);
@@ -399,45 +412,40 @@ async function loadMoreDiscovery() {
   }
 }
 
-// Appends new cards/dots straight into the existing DOM (rather than a full re-render) so the
-// carousel the user is mid-scroll on doesn't jump back to the start. Falls back to a full
-// renderDiscovery() only for the rare case a section was empty before (its track doesn't exist
+// Appends new cards/dots straight into ONE group's existing track (rather than a full re-render)
+// so the carousel the user is mid-scroll on doesn't jump back to the start. Falls back to a full
+// renderDiscovery() only for the rare case that section was empty before (its track doesn't exist
 // yet in the DOM to append into).
-function appendDiscoveryCards(newItems) {
-  const groups = [
-    ['shop', newItems.filter(isShoppingOrFoodItem)],
-    ['other', newItems.filter((item) => !isShoppingOrFoodItem(item))]
-  ].filter(([, items]) => items.length);
-  if (!groups.length) return;
-  const needsFullRender = groups.some(([groupId]) => !document.querySelector('[data-discovery-track="' + groupId + '"]'));
-  if (needsFullRender) { renderDiscovery(); return; }
-  groups.forEach(([groupId, items]) => {
-    const track = document.querySelector('[data-discovery-track="' + groupId + '"]');
-    const dotsContainer = document.querySelector('[data-discovery-dots="' + groupId + '"]');
-    const existingCount = dotsContainer.querySelectorAll('button').length;
-    track.insertAdjacentHTML('beforeend', items.map(discoveryCardMarkup).join(''));
-    dotsContainer.insertAdjacentHTML('beforeend', items.map((_, index) => `<button aria-label="การ์ดที่ ${existingCount + index + 1}"></button>`).join(''));
-    hydrateDiscoveryImages(track);
-  });
+function appendDiscoveryCardsToGroup(groupId, items) {
+  if (!items.length) return;
+  const track = document.querySelector('[data-discovery-track="' + groupId + '"]');
+  const dotsContainer = document.querySelector('[data-discovery-dots="' + groupId + '"]');
+  if (!track || !dotsContainer) { renderDiscovery(); return; }
+  const existingCount = dotsContainer.querySelectorAll('button').length;
+  track.insertAdjacentHTML('beforeend', items.map(discoveryCardMarkup).join(''));
+  dotsContainer.insertAdjacentHTML('beforeend', items.map((_, index) => `<button aria-label="การ์ดที่ ${existingCount + index + 1}"></button>`).join(''));
+  hydrateDiscoveryImages(track);
 }
 
-// Toggles a small busy state on the discovery tracks while a load-more fetch is in flight,
-// without touching scroll position (a full renderDiscovery() would reset it to 0).
+// Toggles a small busy state on just the carousel that's actually loading more, without touching
+// scroll position (a full renderDiscovery() would reset it to 0).
 function renderDiscoveryLoadMoreState() {
   document.querySelectorAll('.discovery-carousel').forEach((carousel) => {
-    carousel.classList.toggle('is-loading-more', discoveryState.loadingMore);
+    const track = carousel.querySelector('[data-discovery-track]');
+    const groupId = track?.dataset.discoveryTrack;
+    carousel.classList.toggle('is-loading-more', !!discoveryState.loadingMore && discoveryState.loadingMore === groupId);
   });
 }
 
-// Fires on every scroll of either carousel track; triggers loadMoreDiscovery() once the user is
-// within ~1 card-width of the end, so it feels like "scrolling to the end asks for more" rather
-// than needing a precise pixel-perfect drag past the boundary.
+// Fires on every scroll of either carousel track; triggers loadMoreDiscovery() for THAT track's
+// own group once the user is within ~half a card-width of the end, so it feels like "scrolling to
+// the end asks for more" rather than needing a precise pixel-perfect drag past the boundary.
 function maybeLoadMoreDiscovery(track) {
   if (discoveryState.loading || discoveryState.loadingMore) return;
   if ((discoveryState.moreCount || 0) >= MAX_DISCOVERY_LOAD_MORE) return;
   const threshold = Math.max(48, discoveryScrollStep(track) * 0.5);
   const distanceFromEnd = track.scrollWidth - track.clientWidth - track.scrollLeft;
-  if (distanceFromEnd <= threshold) loadMoreDiscovery();
+  if (distanceFromEnd <= threshold) loadMoreDiscovery(track.dataset.discoveryTrack);
 }
 
 // Shared by both "open the Discover tab" and "tap a city chip": reuse that city's cache if it's
