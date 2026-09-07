@@ -91,6 +91,10 @@ function isInvalidKeyMessage(message) {
   return /api key not valid|api_key_invalid|permission denied/i.test(message || '');
 }
 
+function isAuthFormatIssueMessage(message) {
+  return /oauth 2 access token|access_token_type_unsupported|invalid authentication credentials/i.test(message || '');
+}
+
 function buildDiscoveryPrompt(city) {
   const trip = DATA.trip || {};
   return [
@@ -287,12 +291,19 @@ function discoveryLoadingMarkup() {
 
 function discoveryErrorMarkup() {
   const invalidKey = isInvalidKeyMessage(discoveryState.error);
-  const hint = invalidKey
-    ? 'ตรวจสอบว่าคัดลอก API Key มาครบทั้งบรรทัดและไม่มีช่องว่างเกิน หรือสร้าง Key ใหม่ที่ Google AI Studio'
-    : discoveryState.error;
+  const authFormatIssue = !invalidKey && isAuthFormatIssueMessage(discoveryState.error);
+  let title = 'ค้นหาไม่สำเร็จ';
+  let hint = discoveryState.error;
+  if (invalidKey) {
+    title = 'API Key ไม่ถูกต้อง';
+    hint = 'ตรวจสอบว่าคัดลอก API Key มาครบทั้งบรรทัดและไม่มีช่องว่างเกิน หรือสร้าง Key ใหม่ที่ Google AI Studio';
+  } else if (authFormatIssue) {
+    title = 'ปัญหาชั่วคราวจากฝั่ง Google';
+    hint = 'Key ที่สร้างใหม่ตอนนี้บางบัญชีได้รูปแบบ "AQ." ซึ่ง Google ยังมีปัญหาใช้กับ Gemini API โดยตรง (ยังไม่มีวิธีแก้จาก Google ตอนนี้) ลองสร้าง Key จากโปรเจกต์เก่าที่เคยใช้งานได้ หรือรอ Google แก้ไข แล้วกด "ลองอีกครั้ง"';
+  }
   return `
     <div class="empty-panel">
-      <strong>${invalidKey ? 'API Key ไม่ถูกต้อง' : 'ค้นหาไม่สำเร็จ'}</strong>
+      <strong>${title}</strong>
       <p>${esc(hint)}</p>
       <div class="empty-panel__actions">
         <button data-refresh-discovery>ลองอีกครั้ง</button>
