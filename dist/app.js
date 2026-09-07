@@ -652,7 +652,8 @@ function openResource(key) {
 function resourceList(rows = [], titleKey, subtitleKey, metaKey, idKey, linkKey) {
   return rows.map((item) => {
     const link = item[linkKey] || item.Google_Maps_URL || item.Link;
-    return detailCard(item[titleKey] || item.Name || item.Item || item[idKey], item[subtitleKey], item[metaKey],
+    const title = item[titleKey] || item.Video_Name || item.Video_Title || item.Place_Name || item.Title || item.Name || item.Item || item[idKey];
+    return detailCard(title, item[subtitleKey], item[metaKey],
       iconFor(item.Category || item.Type || titleKey),
       safeUrl(link) !== '#' ? `<div class="resource-actions"><button data-url="${safeUrl(link)}">เปิด ↗</button></div>` : '');
   }).join('');

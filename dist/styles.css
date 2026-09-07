@@ -16,7 +16,9 @@
 .setup-card__row input{flex:1;min-width:0;border:1px solid var(--line);border-radius:12px;padding:11px 12px;background:var(--paper);outline:none;font-size:.85rem}
 .setup-card__row button{border:0;background:var(--ink);color:white;border-radius:12px;padding:0 18px;font-weight:700;font-size:.8rem}
 .discovery-carousel{position:relative;margin:14px -20px 0}
-.discovery-carousel:after{content:'';position:absolute;top:2px;right:0;bottom:6px;width:30px;background:linear-gradient(to right,transparent,var(--paper) 80%);pointer-events:none}
+.discovery-carousel:after{content:'';position:absolute;top:2px;right:0;bottom:6px;width:30px;background:linear-gradient(to right,transparent,var(--paper) 80%);pointer-events:none;transition:opacity .2s}
+.discovery-carousel.is-loading-more:after{animation:discoveryLoadMorePulse 1s ease-in-out infinite}
+@keyframes discoveryLoadMorePulse{0%,100%{opacity:1}50%{opacity:.35}}
 .discovery-track{display:flex;gap:12px;overflow-x:auto;scroll-snap-type:x mandatory;padding:2px 20px 6px;scrollbar-width:none;-webkit-overflow-scrolling:touch;touch-action:pan-x;scroll-padding-left:20px}
 .discovery-track::-webkit-scrollbar{display:none}
 .discovery-card{flex:0 0 82%;scroll-snap-align:start;background:var(--surface);border:1px solid var(--line);border-radius:20px;overflow:hidden;display:flex;flex-direction:column}
