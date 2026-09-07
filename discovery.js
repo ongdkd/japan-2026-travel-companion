@@ -78,6 +78,59 @@ function clearDiscoveryCache() {
   }
 })();
 
+// The trip only ever covers these four cities, so "near me" snaps the device's real GPS
+// coordinates to whichever of them is actually closest, rather than sending raw coordinates to
+// Gemini (which would need a whole separate cache/prompt shape for no real benefit here).
+const DISCOVERY_CITY_COORDS = {
+  Osaka: [34.6937, 135.5023],
+  Kyoto: [35.0116, 135.7681],
+  Nara: [34.6851, 135.8048],
+  Tokyo: [35.6762, 139.6503]
+};
+
+function haversineKm(lat1, lon1, lat2, lon2) {
+  const toRad = (deg) => (deg * Math.PI) / 180;
+  const R = 6371;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function nearestTripCity(lat, lon) {
+  let best = null;
+  let bestDist = Infinity;
+  for (const [city, [cLat, cLon]] of Object.entries(DISCOVERY_CITY_COORDS)) {
+    const dist = haversineKm(lat, lon, cLat, cLon);
+    if (dist < bestDist) { bestDist = dist; best = city; }
+  }
+  return best;
+}
+
+function useMyLocationForDiscovery() {
+  if (!navigator.geolocation) {
+    showToast('อุปกรณ์นี้ไม่รองรับการหาตำแหน่ง');
+    return;
+  }
+  showToast('กำลังหาตำแหน่งของคุณ…');
+  navigator.geolocation.getCurrentPosition(
+    (position) => {
+      const city = nearestTripCity(position.coords.latitude, position.coords.longitude);
+      discoveryState.useMyLocation = true;
+      loadCityFromCacheOrFetch(city);
+    },
+    (error) => {
+      const messages = {
+        1: 'ไม่ได้รับอนุญาตให้เข้าถึงตำแหน่ง กรุณาเลือกเมืองด้วยตัวเองแทน',
+        2: 'หาตำแหน่งไม่สำเร็จ กรุณาเลือกเมืองด้วยตัวเองแทน',
+        3: 'หาตำแหน่งใช้เวลานานเกินไป กรุณาเลือกเมืองด้วยตัวเองแทน'
+      };
+      showToast(messages[error.code] || 'หาตำแหน่งไม่สำเร็จ กรุณาเลือกเมืองด้วยตัวเองแทน');
+    },
+    { enableHighAccuracy: false, timeout: 8000, maximumAge: 5 * 60 * 1000 }
+  );
+}
+
 function tripCityForToday() {
   const today = japanToday();
   const todays = itineraryFor(today);
@@ -494,8 +547,11 @@ function renderDiscovery() {
     <header class="simple-header"><div><p class="eyebrow">JAPAN 2026 · AI</p><h1 id="discovery-title">ค้นพบ</h1></div>
       ${key ? `<button class="icon-button" data-refresh-discovery aria-label="รีเฟรช"${discoveryState.loading ? ' aria-busy="true"' : ''}>${discoveryState.loading ? '◌' : '↻'}</button>` : ''}
     </header>
-    <p class="discovery-subtitle">กิจกรรมแนะนำโดย AI ใกล้ ${esc(city || '')}</p>
-    ${key ? `<div class="filter-row">${cities.map((c) => `<button class="${city === c ? 'active' : ''}" data-discovery-city="${c}">${c}</button>`).join('')}</div>` : ''}
+    <p class="discovery-subtitle">${discoveryState.useMyLocation ? `กิจกรรมแนะนำโดย AI ใกล้ตำแหน่งของคุณ (ใกล้ ${esc(city || '')} ที่สุด)` : `กิจกรรมแนะนำโดย AI ใกล้ ${esc(city || '')}`}</p>
+    ${key ? `<div class="filter-row">
+      <button class="${discoveryState.useMyLocation ? 'active' : ''}" data-discovery-near-me>📍 ใกล้ฉัน</button>
+      ${cities.map((c) => `<button class="${!discoveryState.useMyLocation && city === c ? 'active' : ''}" data-discovery-city="${c}">${c}</button>`).join('')}
+    </div>` : ''}
     ${!key ? geminiSetupCard() : discoveryState.loading ? discoveryLoadingMarkup() : discoveryState.error ? discoveryErrorMarkup() : discoveryCarouselMarkup()}
   `;
   document.querySelectorAll('[data-discovery-track]').forEach((track) => {
@@ -538,6 +594,12 @@ function discoveryMiniCard() {
 
 document.addEventListener('click', async (event) => {
   const target = event.target;
+
+  const nearMeChip = target.closest('[data-discovery-near-me]');
+  if (nearMeChip) {
+    useMyLocationForDiscovery();
+    return;
+  }
 
   const cityChip = target.closest('[data-discovery-city]');
   if (cityChip) {
