@@ -195,13 +195,7 @@ function renderToday() {
         <p class="card-meta">${money(hotel.Price_THB)} · ${hotel.Self_Check_in ? 'Self check-in' : 'Check-in'}</p>
         <div class="button-row"><button data-url="${safeUrl(hotel.Google_Maps_URL)}">แผนที่</button><button data-resource="hotels">รายละเอียด</button></div>
       </article>
-      <article class="mini-card">
-        <div class="mini-card__head"><span class="emoji-chip">✓</span><span class="status warning">${tasks.length} งาน</span></div>
-        <p class="card-label">งานใกล้ถึงกำหนด</p>
-        <h3>${esc(tasks[0]?.Task || 'ไม่มีงานค้าง')}</h3>
-        <p class="card-meta">${tasks[0]?.Due_Date ? formatDate(parseSheetDate(tasks[0].Due_Date), { day: 'numeric', month: 'short' }) : 'ยังไม่กำหนดวัน'}</p>
-        <div class="button-row one"><button data-resource="tasks">ดูงานทั้งหมด</button></div>
-      </article>
+      ${discoveryMiniCard()}
     </div>
     <div class="section-heading"><h2>${before ? 'ต้องทำก่อนเดินทาง' : 'แผนวันนี้'}</h2><button class="text-button" data-tab="plan">ดูทั้งหมด</button></div>
     <article class="timeline-card">
@@ -890,6 +884,7 @@ function showView(name) {
 function renderAll() {
   renderToday();
   renderPlan();
+  renderDiscovery();
   renderMap();
   renderBookings();
   renderMore();
@@ -1095,6 +1090,8 @@ document.addEventListener('click', async (event) => {
     sessionStorage.removeItem('japan2026.googleToken.v1');
     sessionStorage.removeItem('japan2026.googleToken.write.v2');
     localStorage.removeItem('japan2026.sheetData.v1');
+    clearGeminiKey();
+    clearDiscoveryCache();
     showToast('ล้างข้อมูลบนอุปกรณ์นี้แล้ว');
     setTimeout(() => window.location.reload(), 700);
   }
@@ -1118,3 +1115,4 @@ if (window.SheetsSync?.hasSessionToken()) {
     showToast('ข้อมูลล่าสุดพร้อมแล้ว');
   }).catch(() => {});
 }
+ensureDiscoveryLoaded();
