@@ -201,7 +201,7 @@
 
   async function sheetGrid(title) {
     const token = await requestToken();
-    const range = encodeURIComponent("'" + title + "'!A1:Y200");
+    const range = encodeURIComponent("'" + title + "'!A1:Y");
     const response = await fetch(
       'https://sheets.googleapis.com/v4/spreadsheets/' + SPREADSHEET_ID + '/values/' + range + '?majorDimension=ROWS&valueRenderOption=FORMATTED_VALUE',
       { headers: { Authorization: 'Bearer ' + token } }
@@ -210,6 +210,35 @@
     if (!response.ok) throw new Error('อ่านแผนการเดินทางเพื่อบันทึกไม่สำเร็จ');
     const payload = await response.json();
     return { headers: payload.values?.[0] || [], rows: payload.values?.slice(1) || [] };
+  }
+
+  // Sheets' :append picks its own target by "detecting a table", and that detection is what walked
+  // new quick-add rows sideways into columns I:AH. Writing to an explicit A<row>:<lastCol><row>
+  // range removes the guessing — it is the same PUT the itinerary edit path already used.
+  function columnLetter(count) {
+    let letter = '';
+    for (let n = count; n > 0; n = Math.floor((n - 1) / 26)) letter = String.fromCharCode(65 + ((n - 1) % 26)) + letter;
+    return letter;
+  }
+
+  function rowRange(title, rowNumber, width) {
+    return encodeURIComponent("'" + title + "'!A" + rowNumber + ':' + columnLetter(width) + rowNumber);
+  }
+
+  async function writeRow(title, rowNumber, values) {
+    // ponytail: values.update writes into the existing grid, it does not grow it — fine while the
+    // tabs keep Sheets' default 1000 rows; add an appendDimension batchUpdate if a tab is ever
+    // trimmed down to exactly its data.
+    await sheetsRequest('/values/' + rowRange(title, rowNumber, values.length) + '?valueInputOption=USER_ENTERED', {
+      method: 'PUT', body: JSON.stringify({ majorDimension: 'ROWS', values: [values] })
+    });
+  }
+
+  // Deletes clear a row's cells rather than removing the row, so reuse the first blanked-out row
+  // before growing the sheet.
+  function nextRowNumber(rows) {
+    const blank = rows.findIndex((row) => !row.some((cell) => String(cell ?? '').trim()));
+    return (blank < 0 ? rows.length : blank) + 2;
   }
 
   const itineraryGrid = () => sheetGrid(ITINERARY_SHEET);
@@ -264,18 +293,7 @@
       End_DateTime_ISO: isoInJapan(record.Date, record.End_Time)
     };
     const values = grid.headers.map((header) => merged[header] ?? '');
-    if (existingIndex >= 0) {
-      const rowNumber = existingIndex + 2;
-      const range = encodeURIComponent("'" + ITINERARY_SHEET + "'!A" + rowNumber + ':Y' + rowNumber);
-      await sheetsRequest('/values/' + range + '?valueInputOption=USER_ENTERED', {
-        method: 'PUT', body: JSON.stringify({ majorDimension: 'ROWS', values: [values] })
-      });
-    } else {
-      const range = encodeURIComponent("'" + ITINERARY_SHEET + "'!A:Y");
-      await sheetsRequest('/values/' + range + ':append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS', {
-        method: 'POST', body: JSON.stringify({ majorDimension: 'ROWS', values: [values] })
-      });
-    }
+    await writeRow(ITINERARY_SHEET, existingIndex >= 0 ? existingIndex + 2 : nextRowNumber(grid.rows), values);
     return id;
   }
 
@@ -283,8 +301,7 @@
     const grid = await itineraryGrid();
     const index = grid.rows.findIndex((row) => row[0] === id);
     if (index < 0) throw new Error('ไม่พบรายการที่ต้องการลบ');
-    const rowNumber = index + 2;
-    const range = encodeURIComponent("'" + ITINERARY_SHEET + "'!A" + rowNumber + ':Y' + rowNumber);
+    const range = rowRange(ITINERARY_SHEET, index + 2, grid.headers.length);
     await sheetsRequest('/values/' + range + ':clear', { method: 'POST', body: '{}' });
   }
 
@@ -362,10 +379,7 @@
     if (unmatchedHeaders.length) {
       console.warn('[saveQuickLink] could not confidently fill these columns for ' + config.title + ':', unmatchedHeaders);
     }
-    const range = encodeURIComponent("'" + config.title + "'!A:Y");
-    await sheetsRequest('/values/' + range + ':append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS', {
-      method: 'POST', body: JSON.stringify({ majorDimension: 'ROWS', values: [values] })
-    });
+    await writeRow(config.title, nextRowNumber(grid.rows), values);
     return id;
   }
 
@@ -377,8 +391,7 @@
     if (idIndex < 0) throw new Error('ไม่พบคอลัมน์ ' + config.id);
     const index = grid.rows.findIndex((row) => row[idIndex] === id);
     if (index < 0) throw new Error('ไม่พบรายการที่ต้องการลบ');
-    const rowNumber = index + 2;
-    const range = encodeURIComponent("'" + config.title + "'!A" + rowNumber + ':Y' + rowNumber);
+    const range = rowRange(config.title, index + 2, grid.headers.length);
     await sheetsRequest('/values/' + range + ':clear', { method: 'POST', body: '{}' });
   }
 
