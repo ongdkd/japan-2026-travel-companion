@@ -1267,17 +1267,40 @@ async function oEmbedMetadata(url, platform) {
 // API to resolve it with, so this asks a public CORS-open reflector to fetch it server-side and
 // report back the final URL after redirects, which (for a real Google Maps link) is the long
 // google.com/maps/place/<Name>/@lat,lng... form the rest of this function already knows how to read.
-async function resolveGoogleMapsShortLink(url) {
+// ponytail: public no-key CORS proxies, no SLA — allorigins was timing out outright, which is why
+// saved rows kept the raw short link and the fallback name. Two of them with a hard timeout each
+// covers one being down; the real fix, if both keep failing, is a tiny redirect-resolver endpoint
+// of our own (a Cloud Function that returns the Location header).
+const MAPS_RESOLVER_TIMEOUT_MS = 8000;
+
+async function fetchWithTimeout(url) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), MAPS_RESOLVER_TIMEOUT_MS);
   try {
-    const endpoint = 'https://api.allorigins.win/get?url=' + encodeURIComponent(url);
-    const response = await fetch(endpoint);
-    if (!response.ok) return '';
-    const data = await response.json();
-    const finalUrl = data?.status?.url || '';
-    return finalUrl && finalUrl !== url ? finalUrl : '';
-  } catch {
-    return '';
+    return await fetch(url, { signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
   }
+}
+
+async function resolveGoogleMapsShortLink(url) {
+  const target = encodeURIComponent(url);
+  const attempts = [
+    // Reports the final URL after redirects directly, which is exactly what we need.
+    async () => (await (await fetchWithTimeout('https://api.allorigins.win/get?url=' + target)).json())?.status?.url || '',
+    // Returns the destination page instead; the long maps URL is in its own markup.
+    async () => {
+      const text = await (await fetchWithTimeout('https://api.codetabs.com/v1/proxy?quest=' + target)).text();
+      return text.match(/https:\/\/www\.google\.com\/maps\/place\/[^"'<>\\ ]*/)?.[0] || '';
+    }
+  ];
+  for (const attempt of attempts) {
+    try {
+      const finalUrl = await attempt();
+      if (finalUrl && finalUrl !== url && /google\.[^/]+\/maps/.test(finalUrl)) return finalUrl;
+    } catch { /* proxy down, blocked or too slow — try the next one */ }
+  }
+  return '';
 }
 
 // A Google Maps link carries a name and (usually) coordinates and nothing else — no address, no
@@ -1336,6 +1359,14 @@ async function lookupPlaceDetails(name, coords) {
   return null;
 }
 
+// Deliberately just Japan's bounding box, not its outline — it only has to reject a map centred
+// on another country, and every place this trip covers is well inside it.
+function isInJapan(lat, lon) {
+  const latitude = Number(lat);
+  const longitude = Number(lon);
+  return latitude >= 24 && latitude <= 46 && longitude >= 122 && longitude <= 154;
+}
+
 async function analyzeSharedLink(rawUrl, kind) {
   let parsed;
   try { parsed = new URL(rawUrl); } catch { throw new Error('รูปแบบลิงก์ไม่ถูกต้อง'); }
@@ -1387,8 +1418,15 @@ async function analyzeSharedLink(rawUrl, kind) {
     if (citeMatch) resolvedUrl = citeMatch[1];
   }
   // Runs even when the URL already has coordinates — those give a pin, not an address.
-  const geocoded = kind === 'food' ? await lookupPlaceDetails(name, coords) : null;
+  // A Google Maps share of a plain map view (rather than a place) resolves to .../place//@lat,lng
+  // with an empty name — and the coordinates are wherever the map happened to be centred, which
+  // has been as far away as Bangkok. Looking that up would file a Thai address under a Japan food
+  // row, so anything outside Japan's bounding box is treated as "no location at all".
+  const usableCoords = coords && isInJapan(coords[1], coords[2]) ? coords : null;
+  const geocoded = kind === 'food' ? await lookupPlaceDetails(name, usableCoords) : null;
   const area = areaFromText([name, parsed.href, geocoded?.address].join(' '));
+  // Nothing identified the place: the link had no name, and no coordinates worth looking up.
+  const nameMissing = !geocoded && /สถานที่จาก Google Maps/.test(name);
   const existingPlace = allPlaces().find((place) => {
     const needle = String(place._name || '').toLowerCase();
     return needle.length > 3 && String(name).toLowerCase().includes(needle);
@@ -1398,7 +1436,8 @@ async function analyzeSharedLink(rawUrl, kind) {
     url: resolvedUrl, platform, name,
     category: kind === 'food' || looksFood ? 'Food' : 'Travel',
     area: area?.label || '', city: cityForArea(area?.label || ''),
-    latitude: coords?.[1] || geocoded?.latitude || '', longitude: coords?.[2] || geocoded?.longitude || '', address: geocoded?.address || '',
+    nameMissing,
+    latitude: usableCoords?.[1] || geocoded?.latitude || '', longitude: usableCoords?.[2] || geocoded?.longitude || '', address: geocoded?.address || '',
     cuisine: geocoded?.cuisine || '', phone: geocoded?.phone || '', website: geocoded?.website || '',
     openingHours: geocoded?.openingHours || '',
     // Google's price level ($ / $$ / $$$) is only readable through the paid Places API, and OSM has
@@ -1496,8 +1535,10 @@ quickLinkForm?.addEventListener('submit', async (event) => {
   detection.innerHTML = '<span>↻</span><div><strong>กำลังอ่านลิงก์</strong><p>ตรวจชื่อ แพลตฟอร์ม พื้นที่ และพิกัด</p></div>';
   try {
     const detected = await analyzeSharedLink(rawUrl, kind);
-    detection.className = 'link-detection success';
-    detection.innerHTML = `<span>✓</span><div><strong>${esc(detected.name)}</strong><p>${esc([detected.platform, detected.area, detected.city].filter(Boolean).join(' · ') || 'ตรวจลิงก์แล้ว')}</p></div>`;
+    detection.className = detected.nameMissing ? 'link-detection error' : 'link-detection success';
+    detection.innerHTML = detected.nameMissing
+      ? `<span>!</span><div><strong>ลิงก์นี้ไม่มีชื่อสถานที่</strong><p>เป็นลิงก์ของ "แผนที่" ไม่ใช่ของร้าน — เปิดหน้าร้านใน Google Maps แล้วกด แชร์ จากในหน้านั้น จะได้ชื่อและที่อยู่ครบ</p></div>`
+      : `<span>✓</span><div><strong>${esc(detected.name)}</strong><p>${esc([detected.platform, detected.area, detected.city].filter(Boolean).join(' · ') || 'ตรวจลิงก์แล้ว')}</p></div>`;
     saveButton.textContent = 'กำลังบันทึก…';
     await window.SheetsSync.saveQuickLink(kind, detected);
     await window.SheetsSync.sync();
