@@ -1359,6 +1359,24 @@ async function lookupPlaceDetails(name, coords) {
   return null;
 }
 
+// Sharing from a place card in a Thai-locale Google Maps puts the whole search line into
+// /place/, not just the name: "ญี่ปุ่น 〒110-0005 Tokyo, Taito City, Ueno, 6 Chome−13−2
+// 渡辺上野ビル 3F-A 四万十屋 上野店" — country, postcode, address, floor, and only then the shop.
+// Saving that whole string as Place_Name is useless, and the address in it is better than anything
+// a geocoder would guess. The address half always ends at the last token containing a digit
+// (postcode, block, floor), so whatever trails that is the name.
+//
+// Only links carrying a Japanese postcode are split this way: a plain /place/Ichiran+Shibuya share
+// has no address in it, and a shop with a number in its name would otherwise lose half its title.
+function splitJapanAddressPlace(text) {
+  if (!/〒\s*\d{3}-?\d{4}/.test(text)) return { name: text, address: '' };
+  const tokens = String(text).split(/\s+/).filter(Boolean);
+  let lastWithDigit = -1;
+  tokens.forEach((token, index) => { if (/\d/.test(token)) lastWithDigit = index; });
+  const name = tokens.slice(lastWithDigit + 1).join(' ').trim();
+  return name ? { name, address: tokens.slice(0, lastWithDigit + 1).join(' ').trim() } : { name: text, address: '' };
+}
+
 // Deliberately just Japan's bounding box, not its outline — it only has to reject a map centred
 // on another country, and every place this trip covers is well inside it.
 function isInJapan(lat, lon) {
@@ -1381,8 +1399,10 @@ async function analyzeSharedLink(rawUrl, kind) {
 
   // Only genuine short-link hosts need the resolve step — a link that's already the long
   // google.com/maps/place/... form has everything we need right in the URL already.
+  let shortLinkUnresolved = false;
   if (platform === 'Google Maps' && /^(maps\.app\.goo\.gl|goo\.gl|g\.co)$/i.test(host)) {
     const resolved = await resolveGoogleMapsShortLink(parsed.href);
+    shortLinkUnresolved = !resolved;
     if (resolved) {
       try {
         parsed = new URL(resolved);
@@ -1393,7 +1413,9 @@ async function analyzeSharedLink(rawUrl, kind) {
 
   const pathPlace = parsed.pathname.match(/\/place\/([^/]+)/i)?.[1];
   const queryPlace = parsed.searchParams.get('query') || parsed.searchParams.get('q');
-  let name = decodeURIComponent(pathPlace || queryPlace || '').replace(/\+/g, ' ').trim();
+  const placeText = decodeURIComponent(pathPlace || queryPlace || '').replace(/\+/g, ' ').trim();
+  const fromUrl = splitJapanAddressPlace(placeText);
+  let name = fromUrl.name;
   const coords = parsed.href.match(/@(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/);
   const meta = await oEmbedMetadata(parsed.href, platform);
   if (meta.title) name = meta.title;
@@ -1436,8 +1458,10 @@ async function analyzeSharedLink(rawUrl, kind) {
     url: resolvedUrl, platform, name,
     category: kind === 'food' || looksFood ? 'Food' : 'Travel',
     area: area?.label || '', city: cityForArea(area?.label || ''),
-    nameMissing,
-    latitude: usableCoords?.[1] || geocoded?.latitude || '', longitude: usableCoords?.[2] || geocoded?.longitude || '', address: geocoded?.address || '',
+    nameMissing, shortLinkUnresolved,
+    latitude: usableCoords?.[1] || geocoded?.latitude || '', longitude: usableCoords?.[2] || geocoded?.longitude || '',
+    // The address written into the share link beats a geocoder's guess — it is the one Google shows.
+    address: fromUrl.address || geocoded?.address || '',
     cuisine: geocoded?.cuisine || '', phone: geocoded?.phone || '', website: geocoded?.website || '',
     openingHours: geocoded?.openingHours || '',
     // Google's price level ($ / $$ / $$$) is only readable through the paid Places API, and OSM has
@@ -1535,10 +1559,16 @@ quickLinkForm?.addEventListener('submit', async (event) => {
   detection.innerHTML = '<span>↻</span><div><strong>กำลังอ่านลิงก์</strong><p>ตรวจชื่อ แพลตฟอร์ม พื้นที่ และพิกัด</p></div>';
   try {
     const detected = await analyzeSharedLink(rawUrl, kind);
-    detection.className = detected.nameMissing ? 'link-detection error' : 'link-detection success';
-    detection.innerHTML = detected.nameMissing
-      ? `<span>!</span><div><strong>ลิงก์นี้ไม่มีชื่อสถานที่</strong><p>เป็นลิงก์ของ "แผนที่" ไม่ใช่ของร้าน — เปิดหน้าร้านใน Google Maps แล้วกด แชร์ จากในหน้านั้น จะได้ชื่อและที่อยู่ครบ</p></div>`
-      : `<span>✓</span><div><strong>${esc(detected.name)}</strong><p>${esc([detected.platform, detected.area, detected.city].filter(Boolean).join(' · ') || 'ตรวจลิงก์แล้ว')}</p></div>`;
+    // Two different failures used to look identical (a placeholder row either way): the link had no
+    // place in it, or we never got to read the link at all because the redirect resolver was down.
+    detection.className = detected.nameMissing || detected.shortLinkUnresolved ? 'link-detection error' : 'link-detection success';
+    if (detected.shortLinkUnresolved) {
+      detection.innerHTML = `<span>!</span><div><strong>เปิดลิงก์ย่อไม่สำเร็จ</strong><p>ตัวแปลงลิงก์ล่มหรือเน็ตไม่ถึง — ลองใหม่อีกครั้ง หรือเปิดลิงก์ในเบราว์เซอร์แล้วคัดลอกลิงก์ยาว (google.com/maps/place/...) มาวางแทน</p></div>`;
+    } else if (detected.nameMissing) {
+      detection.innerHTML = `<span>!</span><div><strong>ลิงก์นี้ไม่มีชื่อสถานที่</strong><p>เป็นลิงก์ของ "แผนที่" ไม่ใช่ของร้าน — เปิดหน้าร้านใน Google Maps แล้วกด แชร์ จากในหน้านั้น จะได้ชื่อและที่อยู่ครบ</p></div>`;
+    } else {
+      detection.innerHTML = `<span>✓</span><div><strong>${esc(detected.name)}</strong><p>${esc([detected.platform, detected.area, detected.city].filter(Boolean).join(' · ') || 'ตรวจลิงก์แล้ว')}</p></div>`;
+    }
     saveButton.textContent = 'กำลังบันทึก…';
     await window.SheetsSync.saveQuickLink(kind, detected);
     await window.SheetsSync.sync();
