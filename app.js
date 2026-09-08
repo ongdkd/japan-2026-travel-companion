@@ -1302,6 +1302,12 @@ async function oEmbedMetadata(url, platform) {
 // of our own (a Cloud Function that returns the Location header).
 const MAPS_RESOLVER_TIMEOUT_MS = 8000;
 
+// Set this to your own resolver (see maps-resolver/worker.js) and short links start working
+// properly. Google's first response to a short link already names the place in its Location
+// header — the public proxies below lose it because they follow the whole redirect chain, and they
+// time out often enough that the name usually falls back to the placeholder instead.
+const MAPS_RESOLVER_URL = '';
+
 async function fetchWithTimeout(url) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), MAPS_RESOLVER_TIMEOUT_MS);
@@ -1315,6 +1321,12 @@ async function fetchWithTimeout(url) {
 async function resolveGoogleMapsShortLink(url) {
   const target = encodeURIComponent(url);
   const attempts = [
+    // Reads the Location header of the first response, which is the only place the name survives.
+    async () => {
+      if (!MAPS_RESOLVER_URL) return '';
+      const response = await fetchWithTimeout(MAPS_RESOLVER_URL + '?url=' + target);
+      return (await response.json())?.url || '';
+    },
     // Reports the final URL after redirects directly, which is exactly what we need.
     async () => (await (await fetchWithTimeout('https://api.allorigins.win/get?url=' + target)).json())?.status?.url || '',
     // Returns the destination page instead; the long maps URL is in its own markup.
