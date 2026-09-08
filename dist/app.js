@@ -792,6 +792,11 @@ function extractYouTubeId(url) {
   return '';
 }
 
+function extractInstagramCode(url) {
+  const match = String(url || '').match(/instagram\.com\/(?:reel|reels|p|tv)\/([^/?#]+)/i);
+  return match ? match[1] : '';
+}
+
 function extractTikTokVideoId(url) {
   const match = String(url || '').match(/\/video\/(\d+)/);
   return match ? match[1] : '';
@@ -822,7 +827,8 @@ function shortsEmbedMarkup(item) {
     return `<iframe src="https://www.youtube.com/embed/${esc(id)}?playsinline=1&modestbranding=1&rel=0&enablejsapi=1&mute=1" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen loading="lazy" data-yt-frame></iframe>`;
   }
   if (kind === 'instagram') {
-    return `<blockquote class="instagram-media" data-instgrm-permalink="${esc(url)}" data-instgrm-version="14" style="max-width:400px;min-width:280px"></blockquote>`;
+    const code = extractInstagramCode(url);
+    return code ? instagramEmbedMarkup(code) : shortsFallbackMarkup(item);
   }
   return shortsFallbackMarkup(item);
 }
@@ -830,52 +836,57 @@ function shortsEmbedMarkup(item) {
 // A URL only carries a numeric video id when it's TikTok's own canonical form
 // (tiktok.com/@user/video/123...). Links people actually save are very often a share-sheet
 // short-link instead (vm.tiktok.com/XXXX or tiktok.com/t/XXXX) that redirects to the canonical
-// one — those have no id in the URL at all, so the blockquote TikTok's embed.js needs never gets
-// a data-video-id and just sits there forever, unrendered. This resolves that case by asking
-// TikTok's own (CORS-open, public) oEmbed endpoint for the canonical cite + id — it follows the
-// redirect for us — before building the blockquote.
+// one — those have no id in the URL at all, so there is nothing to build a player URL from. This
+// resolves that case by asking
+// TikTok's own (CORS-open, public) oEmbed endpoint for the canonical id — it follows the redirect
+// for us — before building the player URL. Results are cached because scrolling back and forth in
+// the feed re-mounts the same slot repeatedly.
+const tiktokIdCache = new Map();
+
 async function resolveTikTokVideoId(rawUrl) {
+  if (tiktokIdCache.has(rawUrl)) return tiktokIdCache.get(rawUrl);
   let videoId = extractTikTokVideoId(rawUrl);
-  let cite = rawUrl;
   if (!videoId) {
     try {
       const response = await fetch('https://www.tiktok.com/oembed?url=' + encodeURIComponent(rawUrl));
       if (response.ok) {
-        const data = await response.json();
-        const html = String(data.html || '');
-        const idMatch = html.match(/data-video-id="(\d+)"/);
-        const citeMatch = html.match(/cite="([^"]+)"/);
-        if (idMatch) videoId = idMatch[1];
-        if (citeMatch) cite = citeMatch[1];
+        const html = String((await response.json()).html || '');
+        videoId = html.match(/data-video-id="(\d+)"/)?.[1] || '';
       }
     } catch { /* network hiccup — falls through to the link-out card below */ }
   }
-  return { videoId, cite };
+  if (videoId) tiktokIdCache.set(rawUrl, videoId);
+  return videoId;
 }
 
-function tiktokEmbedMarkup(videoId, cite) {
-  return `<blockquote class="tiktok-embed" cite="${esc(cite)}" data-video-id="${esc(videoId)}" style="max-width:325px;min-width:280px"><section></section></blockquote>`;
+// Both platforms publish a plain iframe player. The blockquote widgets these replace needed
+// embed.js re-injected on every mount to pick up newly inserted blockquotes, and each injection
+// left the previous copy's listeners and timers behind — that is what made the feed get slower
+// the longer you scrolled. Iframes also size to the slot instead of to their own intrinsic card,
+// which is what pushed the TikTok embed out of the container.
+function tiktokEmbedMarkup(videoId) {
+  return `<iframe src="https://www.tiktok.com/player/v1/${esc(videoId)}?music_info=0&description=0" allow="autoplay; fullscreen; encrypted-media; picture-in-picture" allowfullscreen loading="lazy" data-portrait></iframe>`;
+}
+
+function instagramEmbedMarkup(code) {
+  return `<iframe src="https://www.instagram.com/reel/${esc(code)}/embed/" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen loading="lazy" data-portrait></iframe>`;
 }
 
 async function mountTikTokEmbed(slot, item, index) {
-  const rawUrl = item.Link || item.URL || '';
-  const { videoId, cite } = await resolveTikTokVideoId(rawUrl);
+  const videoId = await resolveTikTokVideoId(item.Link || item.URL || '');
   // The viewer may have scrolled past this slot while the resolve above was in flight — if it's
   // no longer part of the mounted window, don't overwrite whatever (or nothing) is there now.
   if (!shortsFeedState.mounted.has(index)) return;
   if (!videoId) { slot.innerHTML = shortsFallbackMarkup(item); return; }
-  slot.innerHTML = tiktokEmbedMarkup(videoId, cite);
-  ensureTikTokEmbedScript();
+  slot.innerHTML = tiktokEmbedMarkup(videoId);
 }
 
 async function mountTikTokEmbedSingle(slot, item) {
-  const rawUrl = item.Link || item.URL || '';
-  const { videoId, cite } = await resolveTikTokVideoId(rawUrl);
+  const videoId = await resolveTikTokVideoId(item.Link || item.URL || '');
   // The single-video player may have been closed while the resolve above was in flight.
   if (!slot.isConnected) return;
   if (!videoId) { slot.innerHTML = shortsFallbackMarkup(item); return; }
-  slot.innerHTML = tiktokEmbedMarkup(videoId, cite);
-  ensureTikTokEmbedScript();
+  slot.innerHTML = tiktokEmbedMarkup(videoId);
 }
 
 function shortsFeedSectionMarkup(item, index) {
@@ -884,29 +895,6 @@ function shortsFeedSectionMarkup(item, index) {
       <div class="shorts-feed__embed" data-shorts-embed-slot></div>
       <div class="shorts-feed__caption"><strong>${esc(videoTitleFor(item))}</strong><span>${esc(item.Platform || '')}</span></div>
     </section>`;
-}
-
-function ensureTikTokEmbedScript() {
-  reloadEmbedScript('https://www.tiktok.com/embed.js', 'tiktokEmbed');
-}
-
-function ensureInstagramEmbedScript() {
-  if (window.instgrm?.Embeds?.process) { window.instgrm.Embeds.process(); return; }
-  reloadEmbedScript('https://www.instagram.com/embed.js', 'instagramEmbed');
-}
-
-// Both TikTok's and Instagram's embed.js scan the DOM for un-rendered blockquotes on load. Their
-// own mutation-watching for LATER dynamically-inserted blockquotes is inconsistent across
-// versions, so the reliable cross-version trick is to reload the script tag itself whenever new
-// blockquotes are added — that forces a fresh full-DOM scan.
-function reloadEmbedScript(src, marker) {
-  const existing = document.querySelector('script[data-' + marker + ']');
-  if (existing) existing.remove();
-  const script = document.createElement('script');
-  script.src = src;
-  script.async = true;
-  script.dataset[marker] = '1';
-  document.body.appendChild(script);
 }
 
 function postYouTubeCommand(iframe, func) {
@@ -931,7 +919,6 @@ function mountShortsFeedAround(index) {
   if (!view) return;
   const items = shortsFeedState.items;
   const keep = new Set([index - 1, index, index + 1].filter((i) => i >= 0 && i < items.length));
-  let mountedNew = false;
   view.querySelectorAll('.shorts-feed__section').forEach((section) => {
     const i = Number(section.dataset.shortsIndex);
     const slot = section.querySelector('[data-shorts-embed-slot]');
@@ -942,14 +929,12 @@ function mountShortsFeedAround(index) {
         mountTikTokEmbed(slot, items[i], i);
       } else {
         slot.innerHTML = shortsEmbedMarkup(items[i]);
-        mountedNew = true;
       }
     } else if (!keep.has(i) && shortsFeedState.mounted.has(i)) {
       slot.innerHTML = '';
       shortsFeedState.mounted.delete(i);
     }
   });
-  if (mountedNew) { ensureTikTokEmbedScript(); ensureInstagramEmbedScript(); }
 }
 
 function closeShortsFeed() {
@@ -1013,7 +998,8 @@ function videoPlayerEmbedMarkup(item) {
     return `<iframe src="https://www.youtube.com/embed/${esc(id)}?playsinline=1&modestbranding=1&rel=0" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen loading="lazy"></iframe>`;
   }
   if (kind === 'instagram') {
-    return `<blockquote class="instagram-media" data-instgrm-permalink="${esc(url)}" data-instgrm-version="14" style="max-width:400px;min-width:280px"></blockquote>`;
+    const code = extractInstagramCode(url);
+    return code ? instagramEmbedMarkup(code) : shortsFallbackMarkup(item);
   }
   return shortsFallbackMarkup(item);
 }
@@ -1035,7 +1021,6 @@ function openVideoPlayer(item) {
     mountTikTokEmbedSingle(slot, item);
   } else {
     slot.innerHTML = videoPlayerEmbedMarkup(item);
-    if (kind === 'instagram') ensureInstagramEmbedScript();
   }
 }
 
