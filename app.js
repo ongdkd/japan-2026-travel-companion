@@ -764,11 +764,24 @@ function videoNormalListMarkup(items) {
     <div class="media-card-grid">${items.map((item, index) => videoNormalCardMarkup(item, index)).join('')}</div>`;
 }
 
+// A row saved before the check above can be holding a place-less Google Maps URL, whose "open"
+// button lands on that same empty Bangkok map. When the row knows the place's name, a Maps search
+// for it is strictly better than opening a link we know is broken.
+function mapLinkFor(item) {
+  const stored = item.Google_Maps_URL || item.Link || '';
+  if (!stored || hasPlaceInMapsUrl(stored) || !/google\.[^/]+\/maps/.test(stored)) return stored;
+  const name = item.Place_Name || item.Place || item.Name || '';
+  const query = [name, item.Area, item.City].filter(Boolean).join(' ').trim();
+  return query && !/สถานที่จาก Google Maps/.test(name)
+    ? 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(query)
+    : stored;
+}
+
 function foodCardMarkup(item) {
   const title = item.Place_Name || item.Place || item.Name || item.Title ||
     fuzzyFieldValue(item, /name|title|place/i, /id$|url$|link$|thumbnail|image/i) || item.Food_ID;
   const thumb = safeUrl(item.Thumbnail_URL || item.Thumbnail || fuzzyFieldValue(item, /thumbnail|cover/i));
-  const link = safeUrl(item.Google_Maps_URL || item.Link);
+  const link = safeUrl(mapLinkFor(item));
   // Google's own place photos are Places-API-only (paid), so a card with no saved thumbnail asks
   // the same free Wikipedia lookup the Discovery cards use — landmarks and big shops get a real
   // photo, everything else keeps the category icon rather than a stock stand-in.
@@ -1297,10 +1310,23 @@ async function resolveGoogleMapsShortLink(url) {
   for (const attempt of attempts) {
     try {
       const finalUrl = await attempt();
-      if (finalUrl && finalUrl !== url && /google\.[^/]+\/maps/.test(finalUrl)) return finalUrl;
+      if (finalUrl && finalUrl !== url && /google\.[^/]+\/maps/.test(finalUrl) && hasPlaceInMapsUrl(finalUrl)) return finalUrl;
     } catch { /* proxy down, blocked or too slow — try the next one */ }
   }
   return '';
+}
+
+// Google does not hand the same destination to everyone. Followed by a phone that has the Maps app,
+// a share link opens the restaurant; followed by a proxy server — or by a desktop browser with no
+// Google session — the very same link lands on ".../place//@13.75,100.52" instead: an empty place
+// name and a map centred on the viewer's own IP, which for us means Bangkok.
+//
+// So a resolved URL is only an improvement when it actually names a place. Adopting a place-less
+// one replaced a short link that works on the phone with a permanent link to a random Bangkok map,
+// which is exactly what the saved row's "open" button was doing.
+function hasPlaceInMapsUrl(url) {
+  const place = String(url).match(/\/place\/([^/?#]*)/);
+  return !!place && place[1].trim().length > 0;
 }
 
 // A Google Maps link carries a name and (usually) coordinates and nothing else — no address, no
