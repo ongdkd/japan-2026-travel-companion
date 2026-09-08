@@ -650,6 +650,7 @@ function openResource(key) {
   }
   detailContent.innerHTML = content || `<div class="empty-panel"><strong>ยังไม่มีข้อมูล</strong><p>เพิ่มรายการใน Google Sheets แล้วกด Sync</p><button data-url="${safeUrl(DATA.source?.url)}">เปิด Google Sheets ↗</button></div>`;
   detailView.hidden = false;
+  hydrateDiscoveryImages(detailContent);
   document.querySelector('.bottom-nav').classList.add('behind-detail');
   detailView.scrollTop = 0;
 }
@@ -768,15 +769,20 @@ function foodCardMarkup(item) {
     fuzzyFieldValue(item, /name|title|place/i, /id$|url$|link$|thumbnail|image/i) || item.Food_ID;
   const thumb = safeUrl(item.Thumbnail_URL || item.Thumbnail || fuzzyFieldValue(item, /thumbnail|cover/i));
   const link = safeUrl(item.Google_Maps_URL || item.Link);
+  // Google's own place photos are Places-API-only (paid), so a card with no saved thumbnail asks
+  // the same free Wikipedia lookup the Discovery cards use — landmarks and big shops get a real
+  // photo, everything else keeps the category icon rather than a stock stand-in.
+  const media = thumb !== '#'
+    ? ` style="background-image:url('${esc(thumb)}')"`
+    : ` data-img-place="${esc(title)}"`;
   return `
     <article class="media-card">
-      <div class="media-card__media"${thumb !== '#' ? ` style="background-image:url('${esc(thumb)}')"` : ''}>
+      <div class="media-card__media"${media}>
         ${thumb === '#' ? `<span class="media-card__placeholder">${iconFor(item.Category || 'food')}</span>` : ''}
       </div>
       <div class="media-card__body">
         <h3>${esc(title)}</h3>
         ${item.Area ? `<p>${esc(item.Area)}</p>` : ''}
-        ${item.Notes ? `<small>${esc(item.Notes)}</small>` : ''}
         ${link !== '#' ? `<div class="resource-actions"><button data-url="${link}">เปิด ↗</button></div>` : ''}
       </div>
     </article>`;
@@ -1300,7 +1306,8 @@ async function nominatimLookup(query) {
       cuisine: tags.cuisine || '',
       phone: tags.phone || tags['contact:phone'] || '',
       website: tags.website || tags['contact:website'] || '',
-      openingHours: tags.opening_hours || ''
+      openingHours: tags.opening_hours || '',
+      image: tags.image || ''
     };
   } catch {
     return null;
@@ -1399,7 +1406,7 @@ async function analyzeSharedLink(rawUrl, kind) {
     priceRange: '',
     googleMapsUrl: existingPlace?.Google_Maps_URL || '', relatedPlaceId: existingPlace?._id || '',
     priority: 'Saved', status: 'Saved',
-    thumbnailUrl: meta.thumbnail_url || '',
+    thumbnailUrl: meta.thumbnail_url || geocoded?.image || '',
     note: `เพิ่มจาก ${platform} โดยอัตโนมัติ${meta.author_name ? ' · ' + meta.author_name : ''}`
   };
 }
