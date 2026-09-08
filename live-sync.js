@@ -288,12 +288,22 @@
     await sheetsRequest('/values/' + range + ':clear', { method: 'POST', body: '{}' });
   }
 
+  // Two quick-adds fired close together (tap "add", then add another before the first finishes)
+  // each independently read the sheet, saw the same last-used id, and appended with the SAME next
+  // id — this is exactly how three unrelated saved videos all ended up as "VIDEO023" at once. The
+  // sheet read can't be made atomic from here, but everything in one browser tab runs on a single
+  // JS thread, so remembering the highest id handed out THIS SESSION and never handing out anything
+  // lower closes that race for the common case (fast repeated taps in the same tab/session).
+  const reservedRecordIds = {};
+
   function nextRecordId(rows, idIndex, prefix) {
-    const maximum = rows.reduce((max, row) => {
+    const sheetMax = rows.reduce((max, row) => {
       const match = String(row[idIndex] || '').match(new RegExp('^' + prefix + '(\\d+)$', 'i'));
       return match ? Math.max(max, Number(match[1])) : max;
     }, 0);
-    return prefix + String(maximum + 1).padStart(3, '0');
+    const next = Math.max(sheetMax, reservedRecordIds[prefix] || 0) + 1;
+    reservedRecordIds[prefix] = next;
+    return prefix + String(next).padStart(3, '0');
   }
 
   async function saveQuickLink(kind, detected) {
