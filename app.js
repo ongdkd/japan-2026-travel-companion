@@ -633,7 +633,7 @@ function openResource(key) {
   } else if (key === 'wishlist') {
     content = resourceList(DATA.wishlist, 'Item', 'Store', 'Expected_Price', 'Wishlist_ID');
   } else if (key === 'videos') {
-    const videos = DATA.videos || [];
+    const videos = videosInDisplayOrder();
     const shorts = videos.filter(isVideoShortItem);
     const normal = videos.filter((item) => !isVideoShortItem(item));
     content = quickAddPanel('videos') + videoShortsRowMarkup(shorts) +
@@ -658,6 +658,24 @@ function openResource(key) {
 // what's already there: an explicit Duration wins when present (lets you override per-row by just
 // filling that column in), otherwise a /shorts/ or /reel/ URL is a dead giveaway, otherwise TikTok
 // and Instagram links default to short-form since that's nearly always what gets saved from them.
+// Both the cards and the click handlers index into the same list, so the order has to stay
+// fixed while a view is open — this shuffles once per DATA.videos array and hands back that same
+// order until a sync replaces the array (which reshuffles, as does a reload).
+let videoDisplayOrder = { source: null, items: [] };
+
+function videosInDisplayOrder() {
+  const videos = DATA.videos || [];
+  if (videoDisplayOrder.source !== videos) {
+    const items = videos.slice();
+    for (let i = items.length - 1; i > 0; i -= 1) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [items[i], items[j]] = [items[j], items[i]];
+    }
+    videoDisplayOrder = { source: videos, items };
+  }
+  return videoDisplayOrder.items;
+}
+
 function isVideoShortItem(item) {
   const url = String(item.Link || item.URL || '').toLowerCase();
   if (/\/shorts\//.test(url) || /\/reels?\//.test(url)) return true;
@@ -1256,17 +1274,59 @@ async function resolveGoogleMapsShortLink(url) {
   }
 }
 
-async function geocodeJapanPlace(name) {
-  if (!name || /สถานที่จาก Google Maps/.test(name)) return null;
+// A Google Maps link carries a name and (usually) coordinates and nothing else — no address, no
+// opening hours, no price. OpenStreetMap's Nominatim fills in the rest for free, and `extratags`
+// returns whatever the OSM entry has for cuisine/phone/website/opening hours.
+//
+// Order matters. Reverse-geocoding the coordinates alone is the unreliable option: it returns
+// whichever POI sits nearest that point, and a shared pin in a dense building comes back as the
+// donut shop next door. So when there is both a name and coordinates, search for the NAME
+// restricted to a ~1km box around them — that pins the right branch of a chain without letting a
+// same-named shop in another city win. Reverse is kept only as the last resort, where it at least
+// gets the street address right. Every field is optional: a place OSM has never heard of just
+// leaves those columns blank instead of failing the save.
+async function nominatimLookup(query) {
   try {
-    const endpoint = 'https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&countrycodes=jp&q=' + encodeURIComponent(name);
-    const response = await fetch(endpoint, { headers: { Accept: 'application/json' } });
+    const response = await fetch('https://nominatim.openstreetmap.org/' + query, { headers: { Accept: 'application/json' } });
     if (!response.ok) return null;
-    const result = (await response.json())?.[0];
-    return result ? { latitude: result.lat, longitude: result.lon, address: result.display_name || '' } : null;
+    const payload = await response.json();
+    const result = Array.isArray(payload) ? payload[0] : payload;
+    if (!result || result.error) return null;
+    const tags = result.extratags || {};
+    return {
+      latitude: result.lat || '',
+      longitude: result.lon || '',
+      address: result.display_name || '',
+      cuisine: tags.cuisine || '',
+      phone: tags.phone || tags['contact:phone'] || '',
+      website: tags.website || tags['contact:website'] || '',
+      openingHours: tags.opening_hours || ''
+    };
   } catch {
     return null;
   }
+}
+
+async function lookupPlaceDetails(name, coords) {
+  const place = name && !/สถานที่จาก Google Maps/.test(name) ? name : '';
+  const fields = 'format=jsonv2&addressdetails=1&extratags=1';
+  const queries = [];
+  if (place && coords) {
+    const lat = Number(coords[1]);
+    const lon = Number(coords[2]);
+    const box = [lon - 0.01, lat + 0.01, lon + 0.01, lat - 0.01].join(',');
+    queries.push('search?' + fields + '&limit=1&bounded=1&viewbox=' + box + '&q=' + encodeURIComponent(place));
+  } else if (place) {
+    queries.push('search?' + fields + '&limit=1&countrycodes=jp&q=' + encodeURIComponent(place));
+  }
+  if (coords) {
+    queries.push('reverse?' + fields + '&zoom=18&lat=' + encodeURIComponent(coords[1]) + '&lon=' + encodeURIComponent(coords[2]));
+  }
+  for (const query of queries) {
+    const result = await nominatimLookup(query);
+    if (result) return result;
+  }
+  return null;
 }
 
 async function analyzeSharedLink(rawUrl, kind) {
@@ -1319,7 +1379,8 @@ async function analyzeSharedLink(rawUrl, kind) {
     const citeMatch = String(meta.html).match(/cite="([^"]+)"/);
     if (citeMatch) resolvedUrl = citeMatch[1];
   }
-  const geocoded = kind === 'food' && !coords ? await geocodeJapanPlace(name) : null;
+  // Runs even when the URL already has coordinates — those give a pin, not an address.
+  const geocoded = kind === 'food' ? await lookupPlaceDetails(name, coords) : null;
   const area = areaFromText([name, parsed.href, geocoded?.address].join(' '));
   const existingPlace = allPlaces().find((place) => {
     const needle = String(place._name || '').toLowerCase();
@@ -1331,6 +1392,11 @@ async function analyzeSharedLink(rawUrl, kind) {
     category: kind === 'food' || looksFood ? 'Food' : 'Travel',
     area: area?.label || '', city: cityForArea(area?.label || ''),
     latitude: coords?.[1] || geocoded?.latitude || '', longitude: coords?.[2] || geocoded?.longitude || '', address: geocoded?.address || '',
+    cuisine: geocoded?.cuisine || '', phone: geocoded?.phone || '', website: geocoded?.website || '',
+    openingHours: geocoded?.openingHours || '',
+    // Google's price level ($ / $$ / $$$) is only readable through the paid Places API, and OSM has
+    // no equivalent tag — left blank rather than guessed.
+    priceRange: '',
     googleMapsUrl: existingPlace?.Google_Maps_URL || '', relatedPlaceId: existingPlace?._id || '',
     priority: 'Saved', status: 'Saved',
     thumbnailUrl: meta.thumbnail_url || '',
@@ -1544,7 +1610,7 @@ document.addEventListener('click', async (event) => {
   }
   const shortTile = target.closest('[data-open-short]');
   if (shortTile) {
-    const items = (DATA.videos || []).filter(isVideoShortItem);
+    const items = videosInDisplayOrder().filter(isVideoShortItem);
     openShortsFeed(items, Number(shortTile.dataset.openShort));
     return;
   }
@@ -1554,7 +1620,7 @@ document.addEventListener('click', async (event) => {
   }
   const videoTile = target.closest('[data-open-video]');
   if (videoTile) {
-    const items = (DATA.videos || []).filter((item) => !isVideoShortItem(item));
+    const items = videosInDisplayOrder().filter((item) => !isVideoShortItem(item));
     const item = items[Number(videoTile.dataset.openVideo)];
     if (item) openVideoPlayer(item);
     return;

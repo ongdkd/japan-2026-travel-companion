@@ -339,6 +339,10 @@
       Platform: detected.platform, Link: detected.url, URL: detected.url,
       Category: detected.category, Area: detected.area, City: detected.city,
       Address: detected.address, Latitude: detected.latitude, Longitude: detected.longitude,
+      Cuisine: detected.cuisine, Food_Type: detected.cuisine,
+      Phone: detected.phone, Website: detected.website,
+      Opening_Hours: detected.openingHours, Hours: detected.openingHours,
+      Price_Range: detected.priceRange, Price: detected.priceRange, Budget: detected.priceRange,
       Google_Maps_URL: kind === 'food' ? detected.url : detected.googleMapsUrl,
       Related_Place_ID: detected.relatedPlaceId,
       Note: detected.note, Notes: detected.note,
@@ -352,6 +356,11 @@
     function fuzzyValueFor(header) {
       const key = String(header || '').toLowerCase();
       if (/map/.test(key)) return kind === 'food' ? detected.url : (detected.googleMapsUrl || '');
+      if (/website|เว็บไซต์/.test(key)) return detected.website;
+      if (/phone|tel|โทร/.test(key)) return detected.phone;
+      if (/open|hour|เวลาเปิด|เวลาทำการ/.test(key)) return detected.openingHours;
+      if (/price|budget|ราคา|งบ/.test(key)) return detected.priceRange;
+      if (/cuisine|ประเภทอาหาร/.test(key)) return detected.cuisine;
       if (/link|url|เว็บ|ลิงก์/.test(key)) return detected.url;
       if (/thumbnail|cover|image|รูป|ภาพ/.test(key)) return detected.thumbnailUrl;
       if (/platform|แพลตฟอร์ม/.test(key)) return detected.platform;
