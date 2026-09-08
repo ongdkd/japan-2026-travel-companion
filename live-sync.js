@@ -363,6 +363,7 @@
       Phone: detected.phone, Website: detected.website,
       Opening_Hours: detected.openingHours, Hours: detected.openingHours,
       Price_Range: detected.priceRange, Price: detected.priceRange, Budget: detected.priceRange,
+      Rating: detected.rating, Score: detected.rating,
       Google_Maps_URL: kind === 'food' ? detected.url : detected.googleMapsUrl,
       Related_Place_ID: detected.relatedPlaceId,
       Note: detected.note, Notes: detected.note,
@@ -380,6 +381,7 @@
       if (/phone|tel|โทร/.test(key)) return detected.phone;
       if (/open|hour|เวลาเปิด|เวลาทำการ/.test(key)) return detected.openingHours;
       if (/price|budget|ราคา|งบ/.test(key)) return detected.priceRange;
+      if (/rating|score|คะแนน|ดาว/.test(key)) return detected.rating;
       if (/cuisine|ประเภทอาหาร/.test(key)) return detected.cuisine;
       if (/link|url|เว็บ|ลิงก์/.test(key)) return detected.url;
       if (/thumbnail|cover|image|รูป|ภาพ/.test(key)) return detected.thumbnailUrl;

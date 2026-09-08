@@ -572,9 +572,25 @@ function resourceCount(key) {
   return (DATA[key] || []).length;
 }
 
+function mapsKeySetupMarkup() {
+  if (getMapsKey()) return '';
+  return `
+    <article class="setup-card">
+      <div class="setup-card__icon">◎</div>
+      <h3>เชื่อม Google Maps</h3>
+      <p>วาง API Key ครั้งเดียว แอปจะจำไว้ในเครื่องนี้ แล้วเติมชื่อร้าน ที่อยู่ เบอร์โทร เวลาเปิด-ปิด ระดับราคา และรูปจาก Google ให้อัตโนมัติ</p>
+      <a class="setup-card__link" href="https://console.cloud.google.com/apis/library/places.googleapis.com" target="_blank" rel="noreferrer">เปิด Places API (New) แล้วสร้าง API Key ↗</a>
+      <div class="setup-card__row">
+        <input id="maps-key-input" type="password" placeholder="วาง API Key ที่นี่" autocomplete="off" spellcheck="false" />
+        <button data-save-maps-key>เชื่อม</button>
+      </div>
+    </article>`;
+}
+
 function quickAddPanel(kind) {
   const isFood = kind === 'food';
-  return `<button class="quick-add-link" data-quick-link="${kind}"><span>${isFood ? '🍜' : '▶'}</span><div><strong>${isFood ? 'เพิ่มร้านจาก Google Maps' : 'เพิ่มวิดีโอจากลิงก์'}</strong><small>วางเพียงลิงก์เดียว · แอปช่วยเติมข้อมูลให้</small></div><b>＋</b></button>`;
+  const button = `<button class="quick-add-link" data-quick-link="${kind}"><span>${isFood ? '🍜' : '▶'}</span><div><strong>${isFood ? 'เพิ่มร้านจาก Google Maps' : 'เพิ่มวิดีโอจากลิงก์'}</strong><small>วางเพียงลิงก์เดียว · แอปช่วยเติมข้อมูลให้</small></div><b>＋</b></button>`;
+  return isFood ? button + mapsKeySetupMarkup() : button;
 }
 
 function renderMore() {
@@ -1385,6 +1401,89 @@ async function lookupPlaceDetails(name, coords) {
   return null;
 }
 
+// Google Maps Platform, unlike the share links, gives the same answer to everyone — which is the
+// whole reason for the key. Places API (New) is the REST one that sends CORS headers; the legacy
+// maps.googleapis.com/maps/api/place endpoints cannot be called from a browser at all.
+//
+// The key lives on the device, never in the sheet, and is expected to be visible in page requests:
+// a Maps browser key is protected by an HTTP-referrer restriction, not by being secret.
+const MAPS_KEY_STORAGE = 'japan2026.mapsKey';
+
+function getMapsKey() {
+  try { return localStorage.getItem(MAPS_KEY_STORAGE) || ''; } catch { return ''; }
+}
+
+function setMapsKey(key) {
+  try { localStorage.setItem(MAPS_KEY_STORAGE, key); } catch { /* private mode — key lasts this session */ }
+}
+
+const PLACE_PRICE_LABELS = {
+  PRICE_LEVEL_FREE: 'ฟรี',
+  PRICE_LEVEL_INEXPENSIVE: '฿',
+  PRICE_LEVEL_MODERATE: '฿฿',
+  PRICE_LEVEL_EXPENSIVE: '฿฿฿',
+  PRICE_LEVEL_VERY_EXPENSIVE: '฿฿฿฿'
+};
+
+const PLACE_FIELDS = [
+  'places.displayName', 'places.formattedAddress', 'places.internationalPhoneNumber',
+  'places.websiteUri', 'places.regularOpeningHours.weekdayDescriptions', 'places.priceLevel',
+  'places.rating', 'places.location', 'places.photos'
+].join(',');
+
+const placeLookupCache = new Map();
+let mapsKeyWarned = false;
+
+// Returns null when there is no key, no match, or the call fails — every caller already has a
+// free fallback, so a missing key must never break saving a place.
+async function placesLookup(query, coords) {
+  const key = getMapsKey();
+  const text = String(query || '').trim();
+  if (!key || !text) return null;
+  const cacheKey = text + '|' + (coords ? coords[1] + ',' + coords[2] : '');
+  if (placeLookupCache.has(cacheKey)) return placeLookupCache.get(cacheKey);
+  const body = { textQuery: text, maxResultCount: 1, languageCode: 'th', regionCode: 'JP' };
+  if (coords) {
+    body.locationBias = { circle: { center: { latitude: Number(coords[1]), longitude: Number(coords[2]) }, radius: 2000 } };
+  }
+  let place = null;
+  try {
+    const response = await fetch('https://places.googleapis.com/v1/places:searchText', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Goog-Api-Key': key, 'X-Goog-FieldMask': PLACE_FIELDS },
+      body: JSON.stringify(body)
+    });
+    if (!response.ok && !mapsKeyWarned) {
+      // A rejected key would otherwise fail silently forever, looking exactly like "this place
+      // isn't on Google" — say it once, then stay quiet.
+      mapsKeyWarned = true;
+      const message = (await response.json().catch(() => null))?.error?.message || ('HTTP ' + response.status);
+      showToast('Google Maps API: ' + message);
+    }
+    if (response.ok) {
+      const found = (await response.json()).places?.[0];
+      if (found) {
+        place = {
+          name: found.displayName?.text || '',
+          address: found.formattedAddress || '',
+          phone: found.internationalPhoneNumber || '',
+          website: found.websiteUri || '',
+          openingHours: (found.regularOpeningHours?.weekdayDescriptions || []).join(' · '),
+          priceRange: PLACE_PRICE_LABELS[found.priceLevel] || '',
+          rating: found.rating ? String(found.rating) : '',
+          latitude: found.location?.latitude != null ? String(found.location.latitude) : '',
+          longitude: found.location?.longitude != null ? String(found.location.longitude) : '',
+          photoUrl: found.photos?.[0]?.name
+            ? 'https://places.googleapis.com/v1/' + found.photos[0].name + '/media?maxWidthPx=640&key=' + encodeURIComponent(key)
+            : ''
+        };
+      }
+    }
+  } catch { /* offline, blocked, or key rejected — callers fall back to OSM */ }
+  placeLookupCache.set(cacheKey, place);
+  return place;
+}
+
 // Sharing from a place card in a Thai-locale Google Maps puts the whole search line into
 // /place/, not just the name: "ญี่ปุ่น 〒110-0005 Tokyo, Taito City, Ueno, 6 Chome−13−2
 // 渡辺上野ビル 3F-A 四万十屋 上野店" — country, postcode, address, floor, and only then the shop.
@@ -1472,9 +1571,13 @@ async function analyzeSharedLink(rawUrl, kind) {
   // row, so anything outside Japan's bounding box is treated as "no location at all".
   const usableCoords = coords && isInJapan(coords[1], coords[2]) ? coords : null;
   const geocoded = kind === 'food' ? await lookupPlaceDetails(name, usableCoords) : null;
+  // Google knows things OSM does not — price level, rating, real opening hours — so where a key is
+  // configured its answer wins, falling back field by field rather than all or nothing.
+  const place = kind === 'food' ? await placesLookup(name, usableCoords) : null;
+  if (place?.name) name = place.name;
   const area = areaFromText([name, parsed.href, geocoded?.address].join(' '));
   // Nothing identified the place: the link had no name, and no coordinates worth looking up.
-  const nameMissing = !geocoded && /สถานที่จาก Google Maps/.test(name);
+  const nameMissing = !geocoded && !place && /สถานที่จาก Google Maps/.test(name);
   const existingPlace = allPlaces().find((place) => {
     const needle = String(place._name || '').toLowerCase();
     return needle.length > 3 && String(name).toLowerCase().includes(needle);
@@ -1485,14 +1588,14 @@ async function analyzeSharedLink(rawUrl, kind) {
     category: kind === 'food' || looksFood ? 'Food' : 'Travel',
     area: area?.label || '', city: cityForArea(area?.label || ''),
     nameMissing, shortLinkUnresolved,
-    latitude: usableCoords?.[1] || geocoded?.latitude || '', longitude: usableCoords?.[2] || geocoded?.longitude || '',
-    // The address written into the share link beats a geocoder's guess — it is the one Google shows.
-    address: fromUrl.address || geocoded?.address || '',
-    cuisine: geocoded?.cuisine || '', phone: geocoded?.phone || '', website: geocoded?.website || '',
-    openingHours: geocoded?.openingHours || '',
-    // Google's price level ($ / $$ / $$$) is only readable through the paid Places API, and OSM has
-    // no equivalent tag — left blank rather than guessed.
-    priceRange: '',
+    latitude: usableCoords?.[1] || place?.latitude || geocoded?.latitude || '',
+    longitude: usableCoords?.[2] || place?.longitude || geocoded?.longitude || '',
+    // Google's own formatted address beats both the share link's and a geocoder's guess.
+    address: place?.address || fromUrl.address || geocoded?.address || '',
+    cuisine: geocoded?.cuisine || '', phone: place?.phone || geocoded?.phone || '',
+    website: place?.website || geocoded?.website || '',
+    openingHours: place?.openingHours || geocoded?.openingHours || '',
+    priceRange: place?.priceRange || '', rating: place?.rating || '',
     googleMapsUrl: existingPlace?.Google_Maps_URL || '', relatedPlaceId: existingPlace?._id || '',
     priority: 'Saved', status: 'Saved',
     thumbnailUrl: meta.thumbnail_url || geocoded?.image || '',
@@ -1643,6 +1746,14 @@ document.addEventListener('click', async (event) => {
   if (target.closest('[data-add-plan]')) { openPlanEditor(); return; }
   const quickLink = target.closest('[data-quick-link]');
   if (quickLink) { openQuickLink(quickLink.dataset.quickLink); return; }
+  if (target.closest('[data-save-maps-key]')) {
+    const value = (document.querySelector('#maps-key-input')?.value || '').trim();
+    if (!value) { showToast('วาง API Key ก่อนกดเชื่อม'); return; }
+    setMapsKey(value);
+    showToast('เชื่อม Google Maps แล้ว');
+    openResource('food');
+    return;
+  }
   const editPlan = target.closest('[data-edit-plan]');
   if (editPlan) {
     const item = (DATA.itinerary || []).find((row) => row.Itinerary_ID === editPlan.dataset.editPlan);
