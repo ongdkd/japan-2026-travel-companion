@@ -177,6 +177,15 @@ async function realImageUrlFor(place) {
   const query = String(place || '').trim();
   if (!query) return '';
   if (placeImageCache.has(query)) return placeImageCache.get(query);
+  // With a Maps key configured, Google's own photo of the place is the best answer and covers the
+  // small cafes and shops Wikipedia has never heard of. Without one, the Wikipedia lookup below is
+  // still the free fallback. (placesLookup lives in app.js — same global scope, and this only runs
+  // after both files have loaded.)
+  const fromGoogle = await placesLookup(query);
+  if (fromGoogle?.photoUrl) {
+    placeImageCache.set(query, fromGoogle.photoUrl);
+    return fromGoogle.photoUrl;
+  }
   let url = '';
   try {
     const response = await fetch('https://en.wikipedia.org/w/api.php?action=query&generator=search'
