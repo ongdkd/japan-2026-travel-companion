@@ -92,7 +92,7 @@
 
   function savedToken() {
     try {
-      const token = JSON.parse(sessionStorage.getItem(TOKEN_KEY));
+      const token = JSON.parse(localStorage.getItem(TOKEN_KEY));
       return token?.access_token && token.expires_at > Date.now() + 60000 ? token : null;
     } catch {
       return null;
@@ -114,10 +114,7 @@
     });
   }
 
-  async function requestToken() {
-    const current = savedToken();
-    if (current) return current.access_token;
-    await waitForGoogle();
+  function requestTokenWithPrompt(prompt) {
     return new Promise((resolve, reject) => {
       const client = google.accounts.oauth2.initTokenClient({
         client_id: CLIENT_ID,
@@ -128,7 +125,7 @@
             return;
           }
           try {
-            sessionStorage.setItem(TOKEN_KEY, JSON.stringify({
+            localStorage.setItem(TOKEN_KEY, JSON.stringify({
               access_token: response.access_token,
               expires_at: Date.now() + Number(response.expires_in || 3600) * 1000
             }));
@@ -139,8 +136,31 @@
         },
         error_callback: () => reject(new Error('หน้าต่าง Google Sign-In ถูกปิดหรือถูกบล็อก'))
       });
-      client.requestAccessToken({ prompt: 'consent' });
+      client.requestAccessToken({ prompt });
     });
+  }
+
+  // Google's browser OAuth only ever hands out one-hour access tokens and no refresh token, so
+  // some re-issue is unavoidable — but it does not have to be a visible login. An empty prompt
+  // asks Google to reissue silently, which works whenever the user is still signed in to Google
+  // and has already granted this app the scope (the normal case). The consent screen is now only
+  // for when that genuinely fails: first run, revoked access, or a signed-out Google session.
+  let silentTokenFailed = false;
+
+  async function requestToken() {
+    const current = savedToken();
+    if (current) return current.access_token;
+    await waitForGoogle();
+    // Once the silent attempt has failed, stop making it: it costs a round trip that eats the tap's
+    // user-activation window, and a popup opened after that window is what browsers block.
+    if (!silentTokenFailed) {
+      try {
+        return await requestTokenWithPrompt('');
+      } catch {
+        silentTokenFailed = true;
+      }
+    }
+    return requestTokenWithPrompt('consent');
   }
 
   async function fetchSheetData(accessToken) {
@@ -152,7 +172,7 @@
       'https://sheets.googleapis.com/v4/spreadsheets/' + SPREADSHEET_ID + '/values:batchGet?' + params,
       { headers: { Authorization: 'Bearer ' + accessToken } }
     );
-    if (response.status === 401) sessionStorage.removeItem(TOKEN_KEY);
+    if (response.status === 401) localStorage.removeItem(TOKEN_KEY);
     if (!response.ok) {
       const detail = await response.json().catch(() => null);
       throw new Error(detail?.error?.message || 'Google Sheets ตอบกลับด้วยรหัส ' + response.status);
@@ -191,7 +211,7 @@
         ...(options.headers || {})
       }
     });
-    if (response.status === 401) sessionStorage.removeItem(TOKEN_KEY);
+    if (response.status === 401) localStorage.removeItem(TOKEN_KEY);
     if (!response.ok) {
       const detail = await response.json().catch(() => null);
       throw new Error(detail?.error?.message || 'บันทึก Google Sheets ไม่สำเร็จ (' + response.status + ')');
@@ -206,7 +226,7 @@
       'https://sheets.googleapis.com/v4/spreadsheets/' + SPREADSHEET_ID + '/values/' + range + '?majorDimension=ROWS&valueRenderOption=FORMATTED_VALUE',
       { headers: { Authorization: 'Bearer ' + token } }
     );
-    if (response.status === 401) sessionStorage.removeItem(TOKEN_KEY);
+    if (response.status === 401) localStorage.removeItem(TOKEN_KEY);
     if (!response.ok) throw new Error('อ่านแผนการเดินทางเพื่อบันทึกไม่สำเร็จ');
     const payload = await response.json();
     return { headers: payload.values?.[0] || [], rows: payload.values?.slice(1) || [] };
@@ -335,7 +355,7 @@
       Food_ID: id, Video_ID: id,
       Place_Name: detected.name, Place: detected.name, Name: detected.name, Title: detected.name,
       Video_Name: detected.name, Video_Title: detected.name,
-      Thumbnail_URL: detected.thumbnailUrl, Thumbnail: detected.thumbnailUrl,
+      Thumbnail_URL: detected.thumbnailUrl, Thumbnail: detected.thumbnailUrl, Image: detected.thumbnailUrl,
       Platform: detected.platform, Link: detected.url, URL: detected.url,
       Category: detected.category, Area: detected.area, City: detected.city,
       Address: detected.address, Latitude: detected.latitude, Longitude: detected.longitude,

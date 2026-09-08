@@ -208,7 +208,9 @@ function loadFirstImage(sources) {
 // actually detect a failed load (a CSS background-image has no error event) and fall down the
 // list, or leave the gradient+icon placeholder if every source fails.
 async function hydrateDiscoveryImage(el) {
-  if (!el.dataset.img || el.dataset.imgHydrated) return;
+  // Discovery cards always carry a stock image to fall back on; food cards deliberately carry only
+  // a place name, so a place Wikipedia doesn't know keeps its icon instead of a stranger's photo.
+  if (el.dataset.imgHydrated || (!el.dataset.img && !el.dataset.imgPlace)) return;
   el.dataset.imgHydrated = '1';
   const real = await realImageUrlFor(el.dataset.imgPlace);
   const url = await loadFirstImage([real, el.dataset.img, el.dataset.imgFallback].filter(Boolean));
@@ -219,7 +221,7 @@ async function hydrateDiscoveryImage(el) {
 
 function hydrateDiscoveryImages(root) {
   if (!root) return;
-  root.querySelectorAll('[data-img]').forEach(hydrateDiscoveryImage);
+  root.querySelectorAll('[data-img], [data-img-place]').forEach(hydrateDiscoveryImage);
 }
 
 function hashCode(text) {
