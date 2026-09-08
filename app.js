@@ -788,7 +788,7 @@ function mapLinkFor(item) {
   if (!stored || hasPlaceInMapsUrl(stored) || !/google\.[^/]+\/maps/.test(stored)) return stored;
   const name = item.Place_Name || item.Place || item.Name || '';
   const query = [name, item.Area, item.City].filter(Boolean).join(' ').trim();
-  return query && !/สถานที่จาก Google Maps/.test(name)
+  return query && usablePlaceName(name)
     ? 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(query)
     : stored;
 }
@@ -1380,7 +1380,7 @@ async function nominatimLookup(query) {
 }
 
 async function lookupPlaceDetails(name, coords) {
-  const place = name && !/สถานที่จาก Google Maps/.test(name) ? name : '';
+  const place = usablePlaceName(name);
   const fields = 'format=jsonv2&addressdetails=1&extratags=1';
   const queries = [];
   if (place && coords) {
@@ -1408,6 +1408,16 @@ async function lookupPlaceDetails(name, coords) {
 // The key lives on the device, never in the sheet, and is expected to be visible in page requests:
 // a Maps browser key is protected by an HTTP-referrer restriction, not by being secret.
 const MAPS_KEY_STORAGE = 'japan2026.mapsKey';
+
+// "สถานที่จาก Google Maps" is the placeholder used when a link yields no name at all. Handing it
+// to a search engine is how FOOD012 ended up as Bangkok's Chinatown: Google was asked to find a
+// place called "place from Google Maps", read it as Thai, and answered with somewhere in Thailand.
+const PLACE_NAME_PLACEHOLDER = /สถานที่จาก Google Maps/;
+
+function usablePlaceName(name) {
+  const text = String(name || '').trim();
+  return text && !PLACE_NAME_PLACEHOLDER.test(text) ? text : '';
+}
 
 function getMapsKey() {
   try { return localStorage.getItem(MAPS_KEY_STORAGE) || ''; } catch { return ''; }
@@ -1462,7 +1472,10 @@ async function placesLookup(query, coords) {
     }
     if (response.ok) {
       const found = (await response.json()).places?.[0];
-      if (found) {
+      const located = found?.location;
+      // Every place this app deals with is in Japan; a hit anywhere else means the query was wrong,
+      // not that the place moved.
+      if (found && (!located || isInJapan(located.latitude, located.longitude))) {
         place = {
           name: found.displayName?.text || '',
           address: found.formattedAddress || '',
@@ -1573,11 +1586,11 @@ async function analyzeSharedLink(rawUrl, kind) {
   const geocoded = kind === 'food' ? await lookupPlaceDetails(name, usableCoords) : null;
   // Google knows things OSM does not — price level, rating, real opening hours — so where a key is
   // configured its answer wins, falling back field by field rather than all or nothing.
-  const place = kind === 'food' ? await placesLookup(name, usableCoords) : null;
+  const place = kind === 'food' && usablePlaceName(name) ? await placesLookup(name, usableCoords) : null;
   if (place?.name) name = place.name;
   const area = areaFromText([name, parsed.href, geocoded?.address].join(' '));
   // Nothing identified the place: the link had no name, and no coordinates worth looking up.
-  const nameMissing = !geocoded && !place && /สถานที่จาก Google Maps/.test(name);
+  const nameMissing = !geocoded && !place && !usablePlaceName(name);
   const existingPlace = allPlaces().find((place) => {
     const needle = String(place._name || '').toLowerCase();
     return needle.length > 3 && String(name).toLowerCase().includes(needle);
