@@ -326,6 +326,19 @@
     return id;
   }
 
+  async function deleteQuickLink(kind, id) {
+    const config = QUICK_LINK_SHEETS[kind];
+    if (!config) throw new Error('รองรับเฉพาะลิงก์อาหารและวิดีโอ');
+    const grid = await sheetGrid(config.title);
+    const idIndex = grid.headers.indexOf(config.id);
+    if (idIndex < 0) throw new Error('ไม่พบคอลัมน์ ' + config.id);
+    const index = grid.rows.findIndex((row) => row[idIndex] === id);
+    if (index < 0) throw new Error('ไม่พบรายการที่ต้องการลบ');
+    const rowNumber = index + 2;
+    const range = encodeURIComponent("'" + config.title + "'!A" + rowNumber + ':Y' + rowNumber);
+    await sheetsRequest('/values/' + range + ':clear', { method: 'POST', body: '{}' });
+  }
+
   async function sync() {
     const token = await requestToken();
     const data = await fetchSheetData(token);
@@ -344,6 +357,7 @@
     saveItinerary,
     deleteItinerary,
     saveQuickLink,
+    deleteQuickLink,
     hasLiveCache: () => window.TRIP_DATA?.source?.mode === 'live_google_sheets',
     hasSessionToken: () => Boolean(savedToken()),
     lastSyncedAt: () => window.TRIP_DATA?.source?.syncedAt || null

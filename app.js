@@ -629,7 +629,7 @@ function openResource(key) {
   } else if (key === 'transport') {
     content = (DATA.transport || []).map((item) => detailCard(item.Route, `${item.Type} · ${item.Operator || ''}`, `${item.Departure_Time || ''} → ${item.Arrival_Time || ''} · ${item.Baggage_Rule || item.Notes || ''}`, '🚆')).join('');
   } else if (key === 'food') {
-    content = quickAddPanel('food') + (resourceList(DATA.food, 'Place_Name', 'Area', 'Notes', 'Food_ID') || '<div class="empty-panel"><strong>ยังไม่มีร้านที่บันทึก</strong><p>เริ่มได้ด้วยลิงก์ Google Maps</p></div>');
+    content = quickAddPanel('food') + (foodListMarkup(DATA.food || []) || '<div class="empty-panel"><strong>ยังไม่มีร้านที่บันทึก</strong><p>เริ่มได้ด้วยลิงก์ Google Maps</p></div>');
   } else if (key === 'wishlist') {
     content = resourceList(DATA.wishlist, 'Item', 'Store', 'Expected_Price', 'Wishlist_ID');
   } else if (key === 'videos') {
@@ -637,7 +637,7 @@ function openResource(key) {
     const shorts = videos.filter(isVideoShortItem);
     const normal = videos.filter((item) => !isVideoShortItem(item));
     content = quickAddPanel('videos') + videoShortsRowMarkup(shorts) +
-      (normal.length ? `<div class="section-heading discovery-section-heading"><h2>วิดีโอปกติ</h2></div>${resourceList(normal, 'Place', 'Platform', 'Note', 'Video_ID', 'Link')}` : '') +
+      videoNormalListMarkup(normal) +
       (!videos.length ? '<div class="empty-panel"><strong>ยังไม่มีวิดีโอที่บันทึก</strong><p>รองรับ TikTok, YouTube และ Instagram</p></div>' : '');
   } else if (key === 'documents') {
     content = (DATA.documents || []).map((item) => detailCard(item.Document_Type || item.Document || item.Name, item.Traveler || item.Owner, item.Expiry ? `หมดอายุ ${item.Expiry}` : item.Status, '▣', safeUrl(item.File_Link || item.Link) !== '#' ? `<div class="resource-actions"><button data-url="${safeUrl(item.File_Link || item.Link)}">เปิดไฟล์ที่จำกัดสิทธิ์ ↗</button></div>` : '')).join('');
@@ -675,9 +675,9 @@ function videoShortCardMarkup(item, index) {
   const title = videoTitleFor(item);
   const thumb = safeUrl(item.Thumbnail_URL || item.Thumbnail || '');
   return `
-    <article class="video-short-card" data-open-short="${index}">
+    <article class="video-short-card" data-open-short="${index}" data-video-delete-id="${esc(item.Video_ID || '')}" data-video-delete-name="${esc(title)}">
       <div class="video-short-card__media"${thumb !== '#' ? ` style="background-image:url('${esc(thumb)}')"` : ''}>
-        <span class="video-short-card__icon">▶</span>
+        ${thumb === '#' ? '<span class="video-short-card__icon">▶</span>' : ''}
         <span class="video-short-card__tag">${esc(item.Platform || '')}</span>
       </div>
       <p class="video-short-card__title">${esc(title)}</p>
@@ -689,6 +689,52 @@ function videoShortsRowMarkup(items) {
   return `
     <div class="section-heading discovery-section-heading"><h2>Shorts</h2></div>
     <div class="video-shorts-row">${items.map((item, index) => videoShortCardMarkup(item, index)).join('')}</div>`;
+}
+
+function videoNormalCardMarkup(item, index) {
+  const title = videoTitleFor(item);
+  const thumb = safeUrl(item.Thumbnail_URL || item.Thumbnail || '');
+  return `
+    <article class="media-card" data-open-video="${index}" data-video-delete-id="${esc(item.Video_ID || '')}" data-video-delete-name="${esc(title)}">
+      <div class="media-card__media"${thumb !== '#' ? ` style="background-image:url('${esc(thumb)}')"` : ''}>
+        ${thumb === '#' ? '<span class="media-card__placeholder">▶</span>' : '<span class="media-card__play">▶</span>'}
+        <span class="media-card__tag">${esc(item.Platform || '')}</span>
+      </div>
+      <div class="media-card__body">
+        <h3>${esc(title)}</h3>
+        ${item.Note ? `<small>${esc(item.Note)}</small>` : ''}
+      </div>
+    </article>`;
+}
+
+function videoNormalListMarkup(items) {
+  if (!items.length) return '';
+  return `
+    <div class="section-heading discovery-section-heading"><h2>วิดีโอปกติ</h2></div>
+    <div class="media-card-grid">${items.map((item, index) => videoNormalCardMarkup(item, index)).join('')}</div>`;
+}
+
+function foodCardMarkup(item) {
+  const title = item.Place_Name || item.Place || item.Name || item.Title || item.Food_ID;
+  const thumb = safeUrl(item.Thumbnail_URL || item.Thumbnail || '');
+  const link = safeUrl(item.Google_Maps_URL || item.Link);
+  return `
+    <article class="media-card">
+      <div class="media-card__media"${thumb !== '#' ? ` style="background-image:url('${esc(thumb)}')"` : ''}>
+        ${thumb === '#' ? `<span class="media-card__placeholder">${iconFor(item.Category || 'food')}</span>` : ''}
+      </div>
+      <div class="media-card__body">
+        <h3>${esc(title)}</h3>
+        ${item.Area ? `<p>${esc(item.Area)}</p>` : ''}
+        ${item.Notes ? `<small>${esc(item.Notes)}</small>` : ''}
+        ${link !== '#' ? `<div class="resource-actions"><button data-url="${link}">เปิด ↗</button></div>` : ''}
+      </div>
+    </article>`;
+}
+
+function foodListMarkup(items) {
+  if (!items.length) return '';
+  return `<div class="media-card-grid">${items.map(foodCardMarkup).join('')}</div>`;
 }
 
 // --- Shorts feed: full-screen vertical scroll-snap player -----------------------------------
@@ -756,8 +802,7 @@ function shortsEmbedMarkup(item) {
 // a data-video-id and just sits there forever, unrendered. This resolves that case by asking
 // TikTok's own (CORS-open, public) oEmbed endpoint for the canonical cite + id — it follows the
 // redirect for us — before building the blockquote.
-async function mountTikTokEmbed(slot, item, index) {
-  const rawUrl = item.Link || item.URL || '';
+async function resolveTikTokVideoId(rawUrl) {
   let videoId = extractTikTokVideoId(rawUrl);
   let cite = rawUrl;
   if (!videoId) {
@@ -773,11 +818,31 @@ async function mountTikTokEmbed(slot, item, index) {
       }
     } catch { /* network hiccup — falls through to the link-out card below */ }
   }
+  return { videoId, cite };
+}
+
+function tiktokEmbedMarkup(videoId, cite) {
+  return `<blockquote class="tiktok-embed" cite="${esc(cite)}" data-video-id="${esc(videoId)}" style="max-width:325px;min-width:280px"><section></section></blockquote>`;
+}
+
+async function mountTikTokEmbed(slot, item, index) {
+  const rawUrl = item.Link || item.URL || '';
+  const { videoId, cite } = await resolveTikTokVideoId(rawUrl);
   // The viewer may have scrolled past this slot while the resolve above was in flight — if it's
   // no longer part of the mounted window, don't overwrite whatever (or nothing) is there now.
   if (!shortsFeedState.mounted.has(index)) return;
   if (!videoId) { slot.innerHTML = shortsFallbackMarkup(item); return; }
-  slot.innerHTML = `<blockquote class="tiktok-embed" cite="${esc(cite)}" data-video-id="${esc(videoId)}" style="max-width:325px;min-width:280px"><section></section></blockquote>`;
+  slot.innerHTML = tiktokEmbedMarkup(videoId, cite);
+  ensureTikTokEmbedScript();
+}
+
+async function mountTikTokEmbedSingle(slot, item) {
+  const rawUrl = item.Link || item.URL || '';
+  const { videoId, cite } = await resolveTikTokVideoId(rawUrl);
+  // The single-video player may have been closed while the resolve above was in flight.
+  if (!slot.isConnected) return;
+  if (!videoId) { slot.innerHTML = shortsFallbackMarkup(item); return; }
+  slot.innerHTML = tiktokEmbedMarkup(videoId, cite);
   ensureTikTokEmbedScript();
 }
 
@@ -896,6 +961,96 @@ function openShortsFeed(items, startIndex) {
   }, { root: view.querySelector('.shorts-feed__scroller'), threshold: [0, 0.6] });
   sections.forEach((section) => observer.observe(section));
   shortsFeedState.observer = observer;
+}
+
+// --- Single video player: for "normal" (non-Shorts) saved videos ----------------------------
+// These are usually full-length YouTube videos, so they get a real playback iframe with controls
+// (not muted/autoplay like the Shorts feed). TikTok/Instagram normal-length links reuse the same
+// official embeds as Shorts. This is a single centered player, not a swipeable feed.
+function closeVideoPlayer() {
+  document.querySelector('#video-player-view')?.remove();
+  document.body.style.overflow = '';
+}
+
+function videoPlayerEmbedMarkup(item) {
+  const url = item.Link || item.URL || '';
+  const kind = shortEmbedKind(item);
+  if (kind === 'youtube') {
+    const id = extractYouTubeId(url);
+    if (!id) return shortsFallbackMarkup(item);
+    return `<iframe src="https://www.youtube.com/embed/${esc(id)}?playsinline=1&modestbranding=1&rel=0" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen loading="lazy"></iframe>`;
+  }
+  if (kind === 'instagram') {
+    return `<blockquote class="instagram-media" data-instgrm-permalink="${esc(url)}" data-instgrm-version="14" style="max-width:400px;min-width:280px"></blockquote>`;
+  }
+  return shortsFallbackMarkup(item);
+}
+
+function openVideoPlayer(item) {
+  closeVideoPlayer();
+  document.body.style.overflow = 'hidden';
+  const view = document.createElement('div');
+  view.id = 'video-player-view';
+  view.className = 'video-player-view';
+  view.innerHTML = `
+    <button class="video-player__close" data-close-video-player aria-label="ปิด">×</button>
+    <div class="video-player__embed" data-video-player-slot></div>
+    <div class="video-player__caption"><strong>${esc(videoTitleFor(item))}</strong><span>${esc(item.Platform || '')}</span></div>`;
+  document.body.appendChild(view);
+  const slot = view.querySelector('[data-video-player-slot]');
+  const kind = shortEmbedKind(item);
+  if (kind === 'tiktok') {
+    mountTikTokEmbedSingle(slot, item);
+  } else {
+    slot.innerHTML = videoPlayerEmbedMarkup(item);
+    if (kind === 'instagram') ensureInstagramEmbedScript();
+  }
+}
+
+// --- Press-and-hold to delete a saved video --------------------------------------------------
+// Applies to both Shorts tiles and normal-video cards via a shared [data-video-delete-id]
+// attribute. A short tap still opens the video as usual; only holding for ~550ms triggers delete,
+// and that same flag suppresses the click event that follows the pointerup so it doesn't also
+// open the video right after deleting (or after cancelling the confirm dialog).
+let videoLongPressTimer = null;
+let videoLongPressFired = false;
+
+function clearVideoLongPress(card) {
+  clearTimeout(videoLongPressTimer);
+  videoLongPressTimer = null;
+  card?.classList.remove('is-pressing');
+}
+
+document.addEventListener('pointerdown', (event) => {
+  const card = event.target.closest('[data-video-delete-id]');
+  if (!card || !card.dataset.videoDeleteId) return;
+  videoLongPressFired = false;
+  clearTimeout(videoLongPressTimer);
+  card.classList.add('is-pressing');
+  videoLongPressTimer = setTimeout(() => {
+    videoLongPressFired = true;
+    card.classList.remove('is-pressing');
+    if (navigator.vibrate) navigator.vibrate(15);
+    confirmDeleteVideo(card.dataset.videoDeleteId, card.dataset.videoDeleteName);
+  }, 550);
+});
+['pointerup', 'pointerleave', 'pointercancel'].forEach((type) => {
+  document.addEventListener(type, (event) => {
+    clearVideoLongPress(event.target.closest('[data-video-delete-id]'));
+  });
+});
+
+async function confirmDeleteVideo(id, name) {
+  if (!id || !window.confirm(`ลบวิดีโอ "${name}" ออกจากรายการที่บันทึกไว้?`)) return;
+  try {
+    await window.SheetsSync.deleteQuickLink('videos', id);
+    await window.SheetsSync.sync();
+    renderAll();
+    openResource('videos');
+    showToast('ลบวิดีโอแล้ว');
+  } catch (error) {
+    showToast(error.message || 'ลบวิดีโอไม่สำเร็จ');
+  }
 }
 
 function resourceList(rows = [], titleKey, subtitleKey, metaKey, idKey, linkKey) {
@@ -1065,6 +1220,25 @@ async function oEmbedMetadata(url, platform) {
   }
 }
 
+// Google Maps' own "Share" sheet almost always hands out a short redirect link
+// (maps.app.goo.gl/XXXX, goo.gl/maps/XXXX, g.co/kgs/XXXX) with no place name or coordinates in the
+// URL at all — the same shape of problem TikTok's share links had. There's no public Maps oEmbed
+// API to resolve it with, so this asks a public CORS-open reflector to fetch it server-side and
+// report back the final URL after redirects, which (for a real Google Maps link) is the long
+// google.com/maps/place/<Name>/@lat,lng... form the rest of this function already knows how to read.
+async function resolveGoogleMapsShortLink(url) {
+  try {
+    const endpoint = 'https://api.allorigins.win/get?url=' + encodeURIComponent(url);
+    const response = await fetch(endpoint);
+    if (!response.ok) return '';
+    const data = await response.json();
+    const finalUrl = data?.status?.url || '';
+    return finalUrl && finalUrl !== url ? finalUrl : '';
+  } catch {
+    return '';
+  }
+}
+
 async function geocodeJapanPlace(name) {
   if (!name || /สถานที่จาก Google Maps/.test(name)) return null;
   try {
@@ -1082,13 +1256,25 @@ async function analyzeSharedLink(rawUrl, kind) {
   let parsed;
   try { parsed = new URL(rawUrl); } catch { throw new Error('รูปแบบลิงก์ไม่ถูกต้อง'); }
   if (!/^https?:$/.test(parsed.protocol)) throw new Error('กรุณาใช้ลิงก์ http หรือ https');
-  const host = parsed.hostname.replace(/^www\./, '').toLowerCase();
+  let host = parsed.hostname.replace(/^www\./, '').toLowerCase();
   let platform = host;
   if (/youtu\.be|youtube\.com/.test(host)) platform = 'YouTube';
   else if (/tiktok\.com/.test(host)) platform = 'TikTok';
   else if (/instagram\.com/.test(host)) platform = 'Instagram';
   else if (/facebook\.com|fb\.watch/.test(host)) platform = 'Facebook';
   else if (/google\.[^/]+|goo\.gl/.test(host)) platform = 'Google Maps';
+
+  // Only genuine short-link hosts need the resolve step — a link that's already the long
+  // google.com/maps/place/... form has everything we need right in the URL already.
+  if (platform === 'Google Maps' && /^(maps\.app\.goo\.gl|goo\.gl|g\.co)$/i.test(host)) {
+    const resolved = await resolveGoogleMapsShortLink(parsed.href);
+    if (resolved) {
+      try {
+        parsed = new URL(resolved);
+        host = parsed.hostname.replace(/^www\./, '').toLowerCase();
+      } catch { /* keep the original short link if the resolved value is somehow invalid */ }
+    }
+  }
 
   const pathPlace = parsed.pathname.match(/\/place\/([^/]+)/i)?.[1];
   const queryPlace = parsed.searchParams.get('query') || parsed.searchParams.get('q');
@@ -1097,8 +1283,15 @@ async function analyzeSharedLink(rawUrl, kind) {
   const meta = await oEmbedMetadata(parsed.href, platform);
   if (meta.title) name = meta.title;
   if (!name) {
-    const tail = decodeURIComponent(parsed.pathname.split('/').filter(Boolean).pop() || '').replace(/[-_+]/g, ' ');
-    name = tail && !/^(maps|shorts|reel|p|watch)$/i.test(tail) ? tail : (kind === 'food' ? 'สถานที่จาก Google Maps' : `วิดีโอจาก ${platform}`);
+    // A Google Maps short link that failed to resolve above has nothing but an opaque share code
+    // left in its path (e.g. "QBqrnGmjEBtyQ9wh6") — that is never a real place name, so it must not
+    // be used as one; everything else can reasonably fall back to its last path segment.
+    if (platform === 'Google Maps') {
+      name = kind === 'food' ? 'สถานที่จาก Google Maps' : `วิดีโอจาก ${platform}`;
+    } else {
+      const tail = decodeURIComponent(parsed.pathname.split('/').filter(Boolean).pop() || '').replace(/[-_+]/g, ' ');
+      name = tail && !/^(maps|shorts|reel|p|watch)$/i.test(tail) ? tail : (kind === 'food' ? 'สถานที่จาก Google Maps' : `วิดีโอจาก ${platform}`);
+    }
   }
   // A pasted TikTok link is very often a share-sheet short-link (vm.tiktok.com/XXXX) that has no
   // video id in it at all — saving that as-is means the Shorts feed can't build a working embed
@@ -1232,6 +1425,14 @@ quickLinkForm?.addEventListener('submit', async (event) => {
 });
 
 document.addEventListener('click', async (event) => {
+  if (videoLongPressFired) {
+    // The pointerdown timer already handled this interaction (opened the delete confirm); the
+    // click that naturally follows pointerup must not also open the video underneath it.
+    videoLongPressFired = false;
+    event.preventDefault();
+    event.stopPropagation();
+    return;
+  }
   const target = event.target;
   const syncButton = target.closest('[data-sync-sheet]');
   if (syncButton) {
@@ -1332,6 +1533,17 @@ document.addEventListener('click', async (event) => {
   }
   if (target.closest('[data-close-shorts-feed]')) {
     closeShortsFeed();
+    return;
+  }
+  const videoTile = target.closest('[data-open-video]');
+  if (videoTile) {
+    const items = (DATA.videos || []).filter((item) => !isVideoShortItem(item));
+    const item = items[Number(videoTile.dataset.openVideo)];
+    if (item) openVideoPlayer(item);
+    return;
+  }
+  if (target.closest('[data-close-video-player]')) {
+    closeVideoPlayer();
     return;
   }
   const urlButton = target.closest('[data-url]');
