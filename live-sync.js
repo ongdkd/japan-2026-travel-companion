@@ -318,7 +318,40 @@
       Priority: detected.priority || 'Saved', Status: detected.status || 'Saved',
       Added_At: new Date().toISOString(), Created_At: new Date().toISOString()
     };
-    const values = grid.headers.map((header) => aliases[header] ?? '');
+    // The exact header names above are a guess at what the real sheet calls each column — when a
+    // header doesn't match any of them exactly, guess from what the header text looks like instead
+    // of silently leaving that column blank (this is what was happening for name/link columns whose
+    // real header text didn't match any alias, e.g. a saved video showing up with no title or link).
+    function fuzzyValueFor(header) {
+      const key = String(header || '').toLowerCase();
+      if (/map/.test(key)) return kind === 'food' ? detected.url : (detected.googleMapsUrl || '');
+      if (/link|url|เว็บ|ลิงก์/.test(key)) return detected.url;
+      if (/thumbnail|cover|image|รูป|ภาพ/.test(key)) return detected.thumbnailUrl;
+      if (/platform|แพลตฟอร์ม/.test(key)) return detected.platform;
+      if (/name|title|place|item|caption|description|ชื่อ/.test(key)) return detected.name;
+      if (/category|type|ประเภท/.test(key)) return detected.category;
+      if (/area|เขต|ย่าน/.test(key)) return detected.area;
+      if (/city|เมือง/.test(key)) return detected.city;
+      if (/address|ที่อยู่/.test(key)) return detected.address;
+      if (/^lat|latitude/.test(key)) return detected.latitude;
+      if (/^lon|^lng|longitude/.test(key)) return detected.longitude;
+      if (/related/.test(key)) return detected.relatedPlaceId;
+      if (/note|หมายเหตุ/.test(key)) return detected.note;
+      if (/priority/.test(key)) return detected.priority || 'Saved';
+      if (/status|สถานะ/.test(key)) return detected.status || 'Saved';
+      if (/added|created|date|time|เวลา|วันที่/.test(key)) return new Date().toISOString();
+      return '';
+    }
+    const unmatchedHeaders = [];
+    const values = grid.headers.map((header) => {
+      if (Object.prototype.hasOwnProperty.call(aliases, header)) return aliases[header] ?? '';
+      const guessed = fuzzyValueFor(header);
+      if (guessed === '') unmatchedHeaders.push(header);
+      return guessed;
+    });
+    if (unmatchedHeaders.length) {
+      console.warn('[saveQuickLink] could not confidently fill these columns for ' + config.title + ':', unmatchedHeaders);
+    }
     const range = encodeURIComponent("'" + config.title + "'!A:Y");
     await sheetsRequest('/values/' + range + ':append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS', {
       method: 'POST', body: JSON.stringify({ majorDimension: 'ROWS', values: [values] })

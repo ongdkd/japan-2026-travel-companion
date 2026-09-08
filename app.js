@@ -667,13 +667,44 @@ function isVideoShortItem(item) {
   return platform === 'tiktok' || platform === 'instagram';
 }
 
+// Best-effort fallback for reading a value off a saved row when its real column header doesn't
+// match any of the specific names already checked before this — the live Google Sheet's actual
+// header text won't always match what this file assumes, so scan for a header that at least looks
+// like the right kind of field before giving up. (The write-side twin lives in live-sync.js.)
+function fuzzyFieldValue(item, includePattern, excludePattern) {
+  for (const key of Object.keys(item)) {
+    if (excludePattern && excludePattern.test(key)) continue;
+    if (includePattern.test(key)) {
+      const value = item[key];
+      if (value !== undefined && value !== null && String(value).trim() !== '') return value;
+    }
+  }
+  return '';
+}
+
 function videoTitleFor(item) {
-  return item.Place || item.Video_Name || item.Video_Title || item.Place_Name || item.Title || item.Name || item.Item || item.Video_ID;
+  return item.Place || item.Video_Name || item.Video_Title || item.Place_Name || item.Title || item.Name || item.Item ||
+    fuzzyFieldValue(item, /name|title|place|caption|description/i, /id$|url$|link$|thumbnail|image/i) || item.Video_ID;
+}
+
+// Prefer a thumbnail actually captured at save time; if the row has none (older rows saved before
+// that existed, or a header-name mismatch swallowed it), a YouTube link can still get a real
+// thumbnail for free — YouTube serves one at a predictable URL for every video id, no API call
+// needed. TikTok/Instagram have no such public predictable URL, so those stay without one until a
+// Thumbnail_URL is actually present on the row.
+function videoThumbnailFor(item) {
+  const stored = item.Thumbnail_URL || item.Thumbnail || fuzzyFieldValue(item, /thumbnail|cover/i);
+  if (stored) return stored;
+  if (shortEmbedKind(item) === 'youtube') {
+    const id = extractYouTubeId(item.Link || item.URL || '');
+    if (id) return `https://img.youtube.com/vi/${id}/hqdefault.jpg`;
+  }
+  return '';
 }
 
 function videoShortCardMarkup(item, index) {
   const title = videoTitleFor(item);
-  const thumb = safeUrl(item.Thumbnail_URL || item.Thumbnail || '');
+  const thumb = safeUrl(videoThumbnailFor(item));
   return `
     <article class="video-short-card" data-open-short="${index}" data-video-delete-id="${esc(item.Video_ID || '')}" data-video-delete-name="${esc(title)}">
       <div class="video-short-card__media"${thumb !== '#' ? ` style="background-image:url('${esc(thumb)}')"` : ''}>
@@ -693,7 +724,7 @@ function videoShortsRowMarkup(items) {
 
 function videoNormalCardMarkup(item, index) {
   const title = videoTitleFor(item);
-  const thumb = safeUrl(item.Thumbnail_URL || item.Thumbnail || '');
+  const thumb = safeUrl(videoThumbnailFor(item));
   return `
     <article class="media-card" data-open-video="${index}" data-video-delete-id="${esc(item.Video_ID || '')}" data-video-delete-name="${esc(title)}">
       <div class="media-card__media"${thumb !== '#' ? ` style="background-image:url('${esc(thumb)}')"` : ''}>
@@ -715,8 +746,9 @@ function videoNormalListMarkup(items) {
 }
 
 function foodCardMarkup(item) {
-  const title = item.Place_Name || item.Place || item.Name || item.Title || item.Food_ID;
-  const thumb = safeUrl(item.Thumbnail_URL || item.Thumbnail || '');
+  const title = item.Place_Name || item.Place || item.Name || item.Title ||
+    fuzzyFieldValue(item, /name|title|place/i, /id$|url$|link$|thumbnail|image/i) || item.Food_ID;
+  const thumb = safeUrl(item.Thumbnail_URL || item.Thumbnail || fuzzyFieldValue(item, /thumbnail|cover/i));
   const link = safeUrl(item.Google_Maps_URL || item.Link);
   return `
     <article class="media-card">
