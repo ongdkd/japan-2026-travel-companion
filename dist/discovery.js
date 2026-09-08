@@ -166,24 +166,55 @@ function fallbackImageUrlFor(query) {
   return 'https://picsum.photos/seed/discover' + Math.abs(hashCode(String(query || 'japan travel'))) + '/640/480';
 }
 
+// A photo OF the actual place, rather than a stock shot that merely matches its tags: Wikipedia's
+// search API is keyless and CORS-open (origin=*) and hands back the article thumbnail. The search
+// is deliberately restricted to `intitle:` — a plain full-text search happily returns the article
+// for the city when the place itself has no article, and a confident photo of the wrong place is
+// worse than an honest stock one. Trendy cafes mostly have no article and keep the stock image.
+const placeImageCache = new Map();
+
+async function realImageUrlFor(place) {
+  const query = String(place || '').trim();
+  if (!query) return '';
+  if (placeImageCache.has(query)) return placeImageCache.get(query);
+  let url = '';
+  try {
+    const response = await fetch('https://en.wikipedia.org/w/api.php?action=query&generator=search'
+      + '&gsrsearch=' + encodeURIComponent('intitle:' + query) + '&gsrlimit=1'
+      + '&prop=pageimages&piprop=thumbnail&pithumbsize=640&format=json&origin=*');
+    if (response.ok) {
+      const pages = (await response.json()).query?.pages || {};
+      url = Object.values(pages)[0]?.thumbnail?.source || '';
+    }
+  } catch { /* offline or blocked — the stock image below still shows */ }
+  placeImageCache.set(query, url);
+  return url;
+}
+
+function loadFirstImage(sources) {
+  return new Promise((resolve) => {
+    const tryAt = (index) => {
+      if (index >= sources.length) { resolve(''); return; }
+      const probe = new Image();
+      probe.onload = () => resolve(sources[index]);
+      probe.onerror = () => tryAt(index + 1);
+      probe.src = sources[index];
+    };
+    tryAt(0);
+  });
+}
+
 // Cards render with data-img/data-img-fallback instead of an inline background-image so we can
-// actually detect a failed load (a CSS background-image has no error event) and swap to the
-// backup source, or leave the gradient+icon placeholder if both fail.
-function hydrateDiscoveryImage(el) {
-  const primary = el.dataset.img;
-  if (!primary || el.dataset.imgHydrated) return;
+// actually detect a failed load (a CSS background-image has no error event) and fall down the
+// list, or leave the gradient+icon placeholder if every source fails.
+async function hydrateDiscoveryImage(el) {
+  if (!el.dataset.img || el.dataset.imgHydrated) return;
   el.dataset.imgHydrated = '1';
-  const apply = (url) => { el.style.backgroundImage = "url('" + url + "')"; el.classList.add('is-loaded'); };
-  const primaryProbe = new Image();
-  primaryProbe.onload = () => apply(primary);
-  primaryProbe.onerror = () => {
-    const fallback = el.dataset.imgFallback;
-    if (!fallback) return;
-    const fallbackProbe = new Image();
-    fallbackProbe.onload = () => apply(fallback);
-    fallbackProbe.src = fallback;
-  };
-  primaryProbe.src = primary;
+  const real = await realImageUrlFor(el.dataset.imgPlace);
+  const url = await loadFirstImage([real, el.dataset.img, el.dataset.imgFallback].filter(Boolean));
+  if (!url) return;
+  el.style.backgroundImage = "url('" + url + "')";
+  el.classList.add('is-loaded');
 }
 
 function hydrateDiscoveryImages(root) {
@@ -220,23 +251,25 @@ function buildDiscoveryPrompt(city, options = {}) {
     `ทริป: ${trip.name || 'Japan 2026'} ช่วงวันที่ ${trip.startDate || ''} ถึง ${trip.endDate || ''}`,
     `กำลังอยู่ที่หรือวางแผนอยู่ใกล้เมือง: ${city}, ประเทศญี่ปุ่น`
   ];
-  if (focus === 'shop') {
-    lines.push('รอบนี้ขอเฉพาะร้านอาหาร คาเฟ่ ของกินที่กำลังฮิต ห้างสรรพสินค้า ตลาด หรือแหล่งช้อปปิ้งสายเทรนด์เท่านั้น (ไม่เอาเทศกาลหรือธรรมชาติ) ประมาณ 8 รายการ');
+  if (focus === 'anime') {
+    lines.push('รอบนี้ขอเฉพาะที่สายอนิเมะ/มังงะ/เกมเท่านั้น เช่น ร้านฟิกเกอร์ ร้านการ์ตูนมือสอง ตู้กาชาปอง เมดคาเฟ่ คาเฟ่ธีมอนิเมะ ป็อปอัพสโตร์/นิทรรศการอนิเมะ เกมเซ็นเตอร์ ร้านโดจิน หรืออีเวนต์คอสเพลย์ (ไม่เอาร้านอาหารทั่วไป ห้างทั่วไป เทศกาลทั่วไป หรือธรรมชาติ) ประมาณ 8 รายการ');
+  } else if (focus === 'shop') {
+    lines.push('รอบนี้ขอเฉพาะร้านอาหาร คาเฟ่ ของกินที่กำลังฮิต ห้างสรรพสินค้า ตลาด หรือแหล่งช้อปปิ้งสายเทรนด์เท่านั้น (ไม่เอาเทศกาล ธรรมชาติ หรือที่สายอนิเมะ) ประมาณ 8 รายการ');
   } else if (focus === 'other') {
-    lines.push('รอบนี้ขอเฉพาะเทศกาล ธรรมชาติ หรือสถานที่ท่องเที่ยวอื่น ๆ ที่มีมุมถ่ายรูปเก๋เท่านั้น (ไม่เอาร้านอาหาร คาเฟ่ ห้าง หรือตลาด) ประมาณ 8 รายการ');
+    lines.push('รอบนี้ขอเฉพาะเทศกาล ธรรมชาติ หรือสถานที่ท่องเที่ยวอื่น ๆ ที่มีมุมถ่ายรูปเก๋เท่านั้น (ไม่เอาร้านอาหาร คาเฟ่ ห้าง ตลาด หรือที่สายอนิเมะ) ประมาณ 8 รายการ');
   } else {
-    lines.push('ช่วยแนะนำกิจกรรม สถานที่ เทศกาล หรืออีเวนต์ที่น่าสนใจจริงและเกี่ยวข้องกับช่วงเวลานี้ ใกล้เมืองนี้ ประมาณ 10 รายการ');
+    lines.push('ช่วยแนะนำกิจกรรม สถานที่ เทศกาล หรืออีเวนต์ที่น่าสนใจจริงและเกี่ยวข้องกับช่วงเวลานี้ ใกล้เมืองนี้ ประมาณ 12 รายการ');
   }
   lines.push('เลือกที่ที่ถูกจริตสาย Gen Z: ถ่ายรูปลงโซเชียลได้สวย (aesthetic/instagrammable), กำลังเป็นกระแสใน TikTok/IG, คาเฟ่ธีมเก๋ ๆ, ร้านของกินที่กำลังไวรัล, ตลาดนัด/ตลาดกลางคืนสายชิล, ร้านมือสอง/วินเทจ, ป็อปอัพสโตร์, สตรีทอาร์ต, จุดถ่ายรูปลับที่คนไทยอาจไม่รู้จัก — เน้นสิ่งเหล่านี้มากกว่าสถานที่ท่องเที่ยวแบบดั้งเดิมที่ใคร ๆ ก็รู้จัก');
   if (!focus) {
-    lines.push('ต้องมีอย่างน้อย 3 รายการเป็นร้านอาหาร คาเฟ่ หรือของกินที่กำลังฮิต และอย่างน้อย 2 รายการเป็นห้างสรรพสินค้า ตลาด หรือแหล่งช้อปปิ้งสายเทรนด์ ที่เหลือเป็นเทศกาล ธรรมชาติ หรือสถานที่ท่องเที่ยวอื่น ๆ ที่มีมุมถ่ายรูปเก๋');
+    lines.push('ต้องมีอย่างน้อย 3 รายการเป็นร้านอาหาร คาเฟ่ หรือของกินที่กำลังฮิต, อย่างน้อย 2 รายการเป็นห้างสรรพสินค้า ตลาด หรือแหล่งช้อปปิ้งสายเทรนด์ และอย่างน้อย 3 รายการเป็นที่สายอนิเมะ/มังงะ/เกม (ร้านฟิกเกอร์ ตู้กาชาปอง เมดคาเฟ่ คาเฟ่ธีมอนิเมะ นิทรรศการหรือป็อปอัพอนิเมะ เกมเซ็นเตอร์ อีเวนต์คอสเพลย์) ที่เหลือเป็นเทศกาล ธรรมชาติ หรือสถานที่ท่องเที่ยวอื่น ๆ ที่มีมุมถ่ายรูปเก๋');
   }
   lines.push('เน้นสิ่งที่เหมาะกับช่วงเดือนตุลาคม เช่น เทศกาลตามฤดูกาล ใบไม้เปลี่ยนสี ตลาดกลางคืน นิทรรศการ หรือจุดท่องเที่ยวที่คนไทยอาจไม่รู้จักมาก่อน');
   lines.push('เขียน description ด้วยโทนเป็นกันเองแบบเพื่อนคุยกัน สนุก กระชับ ใช้สแลงไทยร่วมสมัยได้พอประมาณ (ไม่ทางการ ไม่เวิ่นเว้อ) แต่ยังให้ข้อมูลที่เป็นประโยชน์จริง');
   if (excludeTitles && excludeTitles.length) {
     lines.push('ห้ามแนะนำที่ซ้ำหรือคล้ายกับรายการที่เคยแนะนำไปแล้วนี้ ขอเป็นที่ใหม่ล้วน: ' + excludeTitles.join(', '));
   }
-  lines.push('ตอบเป็น JSON array เท่านั้น (ห้ามมีข้อความอื่นนอกเหนือ JSON) แต่ละรายการมีฟิลด์: title, category (หมวดสั้น ๆ ภาษาไทย เช่น เทศกาล, ธรรมชาติ, ช้อปปิ้ง, อาหาร), city, area, description (ภาษาไทย 1-2 ประโยค โทน Gen Z ตามด้านบน), best_time, image_query (คำค้นภาษาอังกฤษสั้น 2-4 คำ เน้นมุมที่ดูสวย aesthetic เหมาะลงโซเชียล), map_query (ชื่อสถานที่ภาษาอังกฤษสำหรับค้นใน Google Maps)');
+  lines.push('ตอบเป็น JSON array เท่านั้น (ห้ามมีข้อความอื่นนอกเหนือ JSON) แต่ละรายการมีฟิลด์: title, category (หมวดสั้น ๆ ภาษาไทย เช่น เทศกาล, ธรรมชาติ, ช้อปปิ้ง, อาหาร, อนิเมะ), city, area, description (ภาษาไทย 1-2 ประโยค โทน Gen Z ตามด้านบน), best_time, image_query (คำค้นภาษาอังกฤษสั้น 2-4 คำ เน้นมุมที่ดูสวย aesthetic เหมาะลงโซเชียล), map_query (ชื่อสถานที่ภาษาอังกฤษสำหรับค้นใน Google Maps)');
   return lines.join('\n');
 }
 
@@ -339,7 +372,7 @@ async function fetchDiscovery(forceCity) {
   try {
     const raw = await callGemini(buildDiscoveryPrompt(city));
     const stamp = Date.now();
-    const items = raw.slice(0, 10).map((item, index) => ({
+    const items = raw.slice(0, 12).map((item, index) => ({
       id: 'sug_' + stamp + '_' + index,
       title: item.title || 'กิจกรรมแนะนำ',
       category: item.category || 'แนะนำ',
@@ -363,8 +396,8 @@ async function fetchDiscovery(forceCity) {
   }
 }
 
-// Reaching the last card of ONE carousel calls this with just that group's id ('shop' or
-// 'other') — only that track grows. The request is focused to that category (buildDiscoveryPrompt
+// Reaching the last card of ONE carousel calls this with just that group's id (a DISCOVERY_GROUPS
+// id) — only that track grows. The request is focused to that category (buildDiscoveryPrompt
 // focus) and results are filtered again client-side as a safety net, so scrolling shopping/food to
 // the end never quietly pads out the festival/nature track (or vice versa).
 async function loadMoreDiscovery(groupId) {
@@ -379,7 +412,7 @@ async function loadMoreDiscovery(groupId) {
     const raw = await callGemini(buildDiscoveryPrompt(city, { excludeTitles: existingTitles, focus: groupId }));
     const stamp = Date.now();
     const seen = new Set(existingTitles.map((title) => title.toLowerCase().trim()));
-    const matchesGroup = (item) => (groupId === 'shop' ? isShoppingOrFoodItem(item) : !isShoppingOrFoodItem(item));
+    const matchesGroup = (item) => discoveryGroupIdFor(item) === groupId;
     const newItems = raw
       .filter((item) => item.title && !seen.has(String(item.title).toLowerCase().trim()) && matchesGroup(item))
       .slice(0, 8)
@@ -437,7 +470,7 @@ function renderDiscoveryLoadMoreState() {
   });
 }
 
-// Fires on every scroll of either carousel track; triggers loadMoreDiscovery() for THAT track's
+// Fires on every scroll of any carousel track; triggers loadMoreDiscovery() for THAT track's
 // own group once the user is within ~half a card-width of the end, so it feels like "scrolling to
 // the end asks for more" rather than needing a precise pixel-perfect drag past the boundary.
 function maybeLoadMoreDiscovery(track) {
@@ -567,18 +600,35 @@ function discoveryErrorMarkup() {
     </div>`;
 }
 
-// Splits the single Gemini response into two groups client-side (rather than a second API call,
-// which the free-tier quota can't really afford) so shopping/food gets its own section above the
-// festivals/nature one, per the prompt's own request for a category mix.
+// Splits the single Gemini response into sections client-side (rather than one API call per
+// section, which the free-tier quota can't really afford), per the prompt's own request for a
+// category mix.
 function isShoppingOrFoodItem(item) {
   const text = [item.category, item.title].join(' ');
   return /ช้อปปิ้ง|ห้าง|ตลาด|ร้านค้า|มอลล์|อาหาร|ร้านอาหาร|คาเฟ่|ของกิน|ขนม|shopping|mall|market|food|restaurant|caf[eé]/i.test(text);
 }
 
+function isAnimeItem(item) {
+  const text = [item.category, item.title].join(' ');
+  return /อนิเมะ|อนิเม|มังงะ|การ์ตูน|โอตาคุ|คอสเพลย์|ฟิกเกอร์|กาชาปอง|เมดคาเฟ่|เกมเซ็นเตอร์|anime|manga|otaku|cosplay|figure|gashapon|gacha|doujin|arcade|maid caf|akihabara|nakano broadway|animate|pok[eé]mon|ghibli|jump shop/i.test(text);
+}
+
+// Order matters: an anime figure shop matches the shopping regex too, so anime is tested first and
+// every item lands in exactly one section. The last group is the catch-all.
+const DISCOVERY_GROUPS = [
+  { id: 'anime', title: 'อนิเมะ & โอตาคุแนะนำ', match: isAnimeItem },
+  { id: 'shop', title: 'ช้อปปิ้ง & ของกินแนะนำ', match: isShoppingOrFoodItem },
+  { id: 'other', title: 'เทศกาลและธรรมชาติแนะนำ', soloTitle: 'กิจกรรมแนะนำ', match: () => true }
+];
+
+function discoveryGroupIdFor(item) {
+  return DISCOVERY_GROUPS.find((group) => group.match(item)).id;
+}
+
 function discoveryCardMarkup(item) {
   return `
     <article class="discovery-card">
-      <div class="discovery-card__media" data-img="${esc(imageUrlFor(item.image_query))}" data-img-fallback="${esc(fallbackImageUrlFor(item.image_query))}">
+      <div class="discovery-card__media" data-img-place="${esc(item.map_query || item.title || '')}" data-img="${esc(imageUrlFor(item.image_query))}" data-img-fallback="${esc(fallbackImageUrlFor(item.image_query))}">
         <span class="discovery-card__tag">${esc(item.category)}</span>
       </div>
       <div class="discovery-card__body">
@@ -610,12 +660,12 @@ function discoveryCarouselMarkup() {
   if (!discoveryState.items.length) {
     return `<div class="empty-panel"><strong>ยังไม่มีคำแนะนำ</strong><p>แตะปุ่มค้นหาเพื่อดูกิจกรรมใกล้ ${esc(discoveryState.city || '')}</p><button data-refresh-discovery>ค้นหาเลย</button></div>`;
   }
-  const shopFood = discoveryState.items.filter(isShoppingOrFoodItem);
-  const others = discoveryState.items.filter((item) => !isShoppingOrFoodItem(item));
-  return (
-    discoverySectionMarkup('shop', 'ช้อปปิ้ง & ของกินแนะนำ', shopFood) +
-    discoverySectionMarkup('other', others.length && shopFood.length ? 'เทศกาลและธรรมชาติแนะนำ' : 'กิจกรรมแนะนำ', others)
-  );
+  const sections = DISCOVERY_GROUPS
+    .map((group) => ({ group, items: discoveryState.items.filter((item) => discoveryGroupIdFor(item) === group.id) }))
+    .filter((section) => section.items.length);
+  return sections
+    .map(({ group, items }) => discoverySectionMarkup(group.id, sections.length === 1 ? (group.soloTitle || group.title) : group.title, items))
+    .join('');
 }
 
 // Each card is only ~82% of the track's width (so the next one peeks in), not 100% — dividing
