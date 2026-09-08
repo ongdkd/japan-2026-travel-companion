@@ -733,6 +733,8 @@ function shortsFallbackMarkup(item) {
   return `<div class="shorts-feed__fallback"><p>วิดีโอนี้เปิดดูในแอปต้นทางได้เลย</p>${url !== '#' ? `<button data-url="${url}">เปิด ↗</button>` : ''}</div>`;
 }
 
+// TikTok is handled separately (mountTikTokEmbed) because its links often need a resolve step
+// first — see the comment there. This covers YouTube, Instagram, and the link-out fallback.
 function shortsEmbedMarkup(item) {
   const url = item.Link || item.URL || '';
   const kind = shortEmbedKind(item);
@@ -741,14 +743,42 @@ function shortsEmbedMarkup(item) {
     if (!id) return shortsFallbackMarkup(item);
     return `<iframe src="https://www.youtube.com/embed/${esc(id)}?playsinline=1&modestbranding=1&rel=0&enablejsapi=1&mute=1" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen loading="lazy" data-yt-frame></iframe>`;
   }
-  if (kind === 'tiktok') {
-    const videoId = extractTikTokVideoId(url);
-    return `<blockquote class="tiktok-embed" cite="${esc(url)}"${videoId ? ` data-video-id="${esc(videoId)}"` : ''} style="max-width:325px;min-width:280px"><section></section></blockquote>`;
-  }
   if (kind === 'instagram') {
     return `<blockquote class="instagram-media" data-instgrm-permalink="${esc(url)}" data-instgrm-version="14" style="max-width:400px;min-width:280px"></blockquote>`;
   }
   return shortsFallbackMarkup(item);
+}
+
+// A URL only carries a numeric video id when it's TikTok's own canonical form
+// (tiktok.com/@user/video/123...). Links people actually save are very often a share-sheet
+// short-link instead (vm.tiktok.com/XXXX or tiktok.com/t/XXXX) that redirects to the canonical
+// one — those have no id in the URL at all, so the blockquote TikTok's embed.js needs never gets
+// a data-video-id and just sits there forever, unrendered. This resolves that case by asking
+// TikTok's own (CORS-open, public) oEmbed endpoint for the canonical cite + id — it follows the
+// redirect for us — before building the blockquote.
+async function mountTikTokEmbed(slot, item, index) {
+  const rawUrl = item.Link || item.URL || '';
+  let videoId = extractTikTokVideoId(rawUrl);
+  let cite = rawUrl;
+  if (!videoId) {
+    try {
+      const response = await fetch('https://www.tiktok.com/oembed?url=' + encodeURIComponent(rawUrl));
+      if (response.ok) {
+        const data = await response.json();
+        const html = String(data.html || '');
+        const idMatch = html.match(/data-video-id="(\d+)"/);
+        const citeMatch = html.match(/cite="([^"]+)"/);
+        if (idMatch) videoId = idMatch[1];
+        if (citeMatch) cite = citeMatch[1];
+      }
+    } catch { /* network hiccup — falls through to the link-out card below */ }
+  }
+  // The viewer may have scrolled past this slot while the resolve above was in flight — if it's
+  // no longer part of the mounted window, don't overwrite whatever (or nothing) is there now.
+  if (!shortsFeedState.mounted.has(index)) return;
+  if (!videoId) { slot.innerHTML = shortsFallbackMarkup(item); return; }
+  slot.innerHTML = `<blockquote class="tiktok-embed" cite="${esc(cite)}" data-video-id="${esc(videoId)}" style="max-width:325px;min-width:280px"><section></section></blockquote>`;
+  ensureTikTokEmbedScript();
 }
 
 function shortsFeedSectionMarkup(item, index) {
@@ -810,9 +840,13 @@ function mountShortsFeedAround(index) {
     const slot = section.querySelector('[data-shorts-embed-slot]');
     if (!slot) return;
     if (keep.has(i) && !shortsFeedState.mounted.has(i)) {
-      slot.innerHTML = shortsEmbedMarkup(items[i]);
       shortsFeedState.mounted.add(i);
-      mountedNew = true;
+      if (shortEmbedKind(items[i]) === 'tiktok') {
+        mountTikTokEmbed(slot, items[i], i);
+      } else {
+        slot.innerHTML = shortsEmbedMarkup(items[i]);
+        mountedNew = true;
+      }
     } else if (!keep.has(i) && shortsFeedState.mounted.has(i)) {
       slot.innerHTML = '';
       shortsFeedState.mounted.delete(i);
@@ -1066,6 +1100,15 @@ async function analyzeSharedLink(rawUrl, kind) {
     const tail = decodeURIComponent(parsed.pathname.split('/').filter(Boolean).pop() || '').replace(/[-_+]/g, ' ');
     name = tail && !/^(maps|shorts|reel|p|watch)$/i.test(tail) ? tail : (kind === 'food' ? 'สถานที่จาก Google Maps' : `วิดีโอจาก ${platform}`);
   }
+  // A pasted TikTok link is very often a share-sheet short-link (vm.tiktok.com/XXXX) that has no
+  // video id in it at all — saving that as-is means the Shorts feed can't build a working embed
+  // from it later. TikTok's own oEmbed response already resolved the redirect to build its embed
+  // html, so pull the canonical long-form URL back out of that instead of the short-link.
+  let resolvedUrl = parsed.href;
+  if (platform === 'TikTok' && meta.html) {
+    const citeMatch = String(meta.html).match(/cite="([^"]+)"/);
+    if (citeMatch) resolvedUrl = citeMatch[1];
+  }
   const geocoded = kind === 'food' && !coords ? await geocodeJapanPlace(name) : null;
   const area = areaFromText([name, parsed.href, geocoded?.address].join(' '));
   const existingPlace = allPlaces().find((place) => {
@@ -1074,7 +1117,7 @@ async function analyzeSharedLink(rawUrl, kind) {
   });
   const looksFood = /food|restaurant|cafe|coffee|ramen|sushi|อาหาร|ร้าน|คาเฟ่|ราเมง|ซูชิ/i.test(name);
   return {
-    url: parsed.href, platform, name,
+    url: resolvedUrl, platform, name,
     category: kind === 'food' || looksFood ? 'Food' : 'Travel',
     area: area?.label || '', city: cityForArea(area?.label || ''),
     latitude: coords?.[1] || geocoded?.latitude || '', longitude: coords?.[2] || geocoded?.longitude || '', address: geocoded?.address || '',
