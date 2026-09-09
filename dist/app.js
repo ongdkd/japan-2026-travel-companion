@@ -3,6 +3,7 @@ const state = {
   view: 'today',
   planDate: DATA.trip?.startDate || '2026-10-09',
   bookingFilter: 'all',
+  mapScope: 'city',
   mapFilter: 'all',
   mapSearch: '',
   selectedPlace: null,
@@ -17,6 +18,7 @@ const state = {
 
 const views = [...document.querySelectorAll('.view')];
 const navButtons = [...document.querySelectorAll('.bottom-nav [data-tab]')];
+navButtons.forEach((button) => button.addEventListener('click', () => showView(button.dataset.tab)));
 const detailView = document.querySelector('#detail-view');
 const detailContent = document.querySelector('#detail-content');
 const toast = document.querySelector('.toast');
@@ -224,7 +226,7 @@ function renderPlan() {
   view.innerHTML = `
     <header class="simple-header"><div><p class="eyebrow">9–18 OCTOBER 2026</p><h1 id="plan-title">แผนการเดินทาง</h1></div><button class="round-add" data-add-plan aria-label="เพิ่มกิจกรรม">＋</button></header>
     <div class="date-strip" role="tablist" aria-label="เลือกวันที่">
-      ${dates.map((date) => `<button class="${isoDate(date) === state.planDate ? 'selected' : ''}" data-plan-date="${isoDate(date)}"><span>${formatDate(date, { weekday: 'short' })}</span><b>${date.getUTCDate()}</b></button>`).join('')}
+      ${dates.map((date) => `<button role="tab" aria-selected="${isoDate(date) === state.planDate}" class="${isoDate(date) === state.planDate ? 'selected' : ''}" data-plan-date="${isoDate(date)}"><span>${formatDate(date, { weekday: 'short' })}</span><b>${date.getUTCDate()}</b></button>`).join('')}
     </div>
     <div class="summary-band"><div><span>📍</span><p><strong>${esc(items[0]?.City || 'Japan')}</strong><small>${items.length} กิจกรรม</small></p></div><div><span>งบในรายการ</span><strong>${estimated ? money(estimated, 'JPY') : 'ยังไม่ระบุ'}</strong></div></div>
     <div class="plan-list">
@@ -325,8 +327,11 @@ function renderMap() {
       <button class="drag-handle" type="button" aria-label="${state.mapSheetExpanded ? 'ลากลงเพื่อดูแผนที่' : 'ลากขึ้นเพื่อดูรายการทั้งหมด'}" aria-expanded="${state.mapSheetExpanded}"><span></span></button>
       <div class="map-controls">
         <div class="search-box"><span>⌕</span><input id="place-search" aria-label="ค้นหาสถานที่หรือย่าน" placeholder="ค้นหา เช่น Asakusa, Akihabara" value="${esc(state.mapSearch)}" /><button data-clear-map-search aria-label="ล้างคำค้นหา" ${state.mapSearch ? '' : 'hidden'}>×</button></div>
+        <div class="map-scope-row" aria-label="ขอบเขตสถานที่">
+          ${[['today','วันนี้'],['city','เมืองถัดไป'],['plan','ในแผน'],['all','ทั้งหมด']].map(([value,label]) => `<button class="${state.mapScope === value ? 'active' : ''}" data-map-scope="${value}" aria-pressed="${state.mapScope === value}">${label}</button>`).join('')}
+        </div>
         <div class="filter-row">
-          ${[['all','ทั้งหมด'],['sightseeing','🏯 ที่เที่ยว'],['food','🍜 อาหาร'],['hotel','🏨 โรงแรม'],['shopping','🛍 ช้อป']].map(([value,label]) => `<button class="${state.mapFilter === value ? 'active' : ''}" data-map-filter="${value}">${label}</button>`).join('')}
+          ${[['all','ทั้งหมด'],['sightseeing','🏯 ที่เที่ยว'],['food','🍜 อาหาร'],['hotel','🏨 โรงแรม'],['shopping','🛍 ช้อป']].map(([value,label]) => `<button class="${state.mapFilter === value ? 'active' : ''}" data-map-filter="${value}" aria-pressed="${state.mapFilter === value}">${label}</button>`).join('')}
         </div>
       </div>
       <div class="map-results-heading"><div><strong id="map-results-title">สถานที่ใกล้คุณ</strong><span id="map-results-count">${places.length} แห่ง</span></div><button data-my-location>ใช้ตำแหน่งฉัน</button></div>
@@ -346,6 +351,17 @@ function mapResults() {
   const area = mapSearchContext();
   const origin = area?.coords || state.userLocation;
   let rows = allPlaces().filter((place) => state.mapFilter === 'all' || mapCategory(place) === state.mapFilter);
+  const scopeItems = state.mapScope === 'today' ? itineraryFor(japanToday()) : (DATA.itinerary || []);
+  const tripCity = typeof tripCityForToday === 'function' ? tripCityForToday() : '';
+  if (state.mapScope === 'today' || state.mapScope === 'plan') {
+    rows = rows.filter((place) => scopeItems.some((item) => {
+      const planText = [item.Place_Name, item.Activity, item.City, item.Area].join(' ').toLowerCase();
+      const name = String(place._name || '').toLowerCase();
+      return name.length > 3 && (planText.includes(name) || planText.split(/\s*[→/&]\s*/).some((part) => part.length > 3 && name.includes(part)));
+    }));
+  } else if (state.mapScope === 'city' && tripCity) {
+    rows = rows.filter((place) => [place.City, place.Area, place.Address].join(' ').toLowerCase().includes(tripCity.toLowerCase()));
+  }
   if (area) {
     rows = rows.filter((place) => distanceKm(area.coords, [place._lat, place._lng]) <= area.radius);
   } else if (query) {
@@ -362,7 +378,8 @@ function renderMapResults(rows = mapResults()) {
   const count = document.querySelector('#map-results-count');
   if (!list || !title || !count) return;
   const area = mapSearchContext();
-  title.textContent = area ? `ใกล้ ${area.label}` : state.mapSearch ? 'ผลการค้นหา' : state.userLocation ? 'ใกล้ตำแหน่งของคุณ' : 'สถานที่แนะนำ';
+  const scopeTitle = { today: 'สถานที่ในแผนวันนี้', city: 'สถานที่ในเมืองถัดไป', plan: 'สถานที่ในแผนทริป', all: 'สถานที่ทั้งหมด' }[state.mapScope];
+  title.textContent = area ? `ใกล้ ${area.label}` : state.mapSearch ? 'ผลการค้นหา' : state.userLocation ? 'ใกล้ตำแหน่งของคุณ' : scopeTitle;
   count.textContent = rows.length + ' แห่ง' + (!state.userLocation && !area ? ' · แตะ “ใช้ตำแหน่งฉัน” เพื่อเรียงใกล้สุด' : '');
   list.innerHTML = rows.length ? rows.map((place, index) => `
     <article class="map-result ${state.selectedPlace?._id === place._id ? 'selected' : ''}" data-map-result-id="${esc(place._id)}" tabindex="0">
@@ -486,6 +503,8 @@ function updateMapMarkers() {
   const filtered = mapResults();
   filtered.forEach((place) => {
     const marker = L.marker([place._lat, place._lng], {
+      title: place._name,
+      alt: 'เปิด ' + place._name,
       icon: L.divIcon({ className: 'map-marker-wrap', html: `<span class="map-marker ${mapCategory(place)}"><b>${iconFor(place._type)}</b></span>`, iconSize: [42, 48], iconAnchor: [21, 44] })
     }).addTo(state.map);
     marker.on('click', () => {
@@ -1252,6 +1271,13 @@ function openQuickLink(kind = 'food') {
   quickLinkForm.reset();
   quickLinkForm.elements.namedItem('Kind').value = kind;
   document.querySelector('#quick-link-title').textContent = kind === 'food' ? 'เพิ่มร้านจากลิงก์' : 'เพิ่มวิดีโอจากลิงก์';
+  document.querySelector('#quick-link-help').textContent = kind === 'food'
+    ? 'วางลิงก์ Google Maps แบบเต็ม หรือพิมพ์ชื่อร้านจากแอป Maps แล้วระบบจะค้นหาและเติมข้อมูลให้'
+    : 'วางลิงก์ TikTok, YouTube หรือ Instagram แล้วระบบจะเติมข้อมูลที่ตรวจพบให้';
+  document.querySelector('#quick-link-url-label').textContent = kind === 'food' ? 'ลิงก์ Google Maps แบบเต็ม (ถ้ามี)' : 'ลิงก์วิดีโอ';
+  const placeNameField = quickLinkForm.querySelector('[data-place-name-field]');
+  placeNameField.hidden = kind !== 'food';
+  quickLinkForm.elements.namedItem('URL').required = kind !== 'food';
   const detection = document.querySelector('#link-detection');
   detection.className = 'link-detection';
   detection.innerHTML = '<span>⌕</span><div><strong>พร้อมตรวจลิงก์</strong><p>ระบบจะระบุแพลตฟอร์ม ชื่อ พื้นที่ และพิกัดเท่าที่ลิงก์มีให้</p></div>';
@@ -1396,7 +1422,7 @@ const PLACE_PRICE_LABELS = {
 const PLACE_FIELDS = [
   'places.displayName', 'places.formattedAddress', 'places.internationalPhoneNumber',
   'places.websiteUri', 'places.regularOpeningHours.weekdayDescriptions', 'places.priceLevel',
-  'places.rating', 'places.location', 'places.photos'
+  'places.rating', 'places.location', 'places.photos', 'places.googleMapsUri'
 ].join(',');
 
 const placeLookupCache = new Map();
@@ -1444,6 +1470,7 @@ async function placesLookup(query, coords) {
           rating: found.rating ? String(found.rating) : '',
           latitude: found.location?.latitude != null ? String(found.location.latitude) : '',
           longitude: found.location?.longitude != null ? String(found.location.longitude) : '',
+          googleMapsUrl: found.googleMapsUri || '',
           photoUrl: found.photos?.[0]?.name
             ? 'https://places.googleapis.com/v1/' + found.photos[0].name + '/media?maxWidthPx=640&key=' + encodeURIComponent(key)
             : ''
@@ -1506,9 +1533,8 @@ async function analyzeSharedLink(rawUrl, kind) {
   const meta = await oEmbedMetadata(parsed.href, platform);
   if (meta.title) name = meta.title;
   if (!name) {
-    // A Google Maps short link that failed to resolve above has nothing but an opaque share code
-    // left in its path (e.g. "QBqrnGmjEBtyQ9wh6") — that is never a real place name, so it must not
-    // be used as one; everything else can reasonably fall back to its last path segment.
+    // An unnamed Google map view is not a place. Keep the placeholder only as a UI signal; callers
+    // reject it before saving so it can never pollute the sheet or downstream place searches.
     if (platform === 'Google Maps') {
       name = kind === 'food' ? 'สถานที่จาก Google Maps' : `วิดีโอจาก ${platform}`;
     } else {
@@ -1565,12 +1591,39 @@ async function analyzeSharedLink(rawUrl, kind) {
   };
 }
 
+async function analyzePlaceName(rawName) {
+  const requestedName = usablePlaceName(rawName);
+  if (!requestedName) throw new Error('พิมพ์ชื่อร้านหรือสถานที่ก่อน');
+  const [place, geocoded] = await Promise.all([placesLookup(requestedName), lookupPlaceDetails(requestedName, null)]);
+  if (!place && !geocoded) throw new Error('ยังหาสถานที่นี้ไม่เจอ ลองเพิ่มชื่อเมืองหรือย่านต่อท้าย');
+  const name = place?.name || requestedName;
+  const area = areaFromText([name, place?.address, geocoded?.address].join(' '));
+  const url = place?.googleMapsUrl || 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(name + ' Japan');
+  const existingPlace = allPlaces().find((item) => String(item._name || '').toLowerCase() === name.toLowerCase());
+  return {
+    url, platform: 'Google Maps', name, category: 'Food',
+    area: area?.label || '', city: cityForArea(area?.label || ''), nameMissing: false,
+    latitude: place?.latitude || geocoded?.latitude || '', longitude: place?.longitude || geocoded?.longitude || '',
+    address: place?.address || geocoded?.address || '', cuisine: geocoded?.cuisine || '',
+    phone: place?.phone || geocoded?.phone || '', website: place?.website || geocoded?.website || '',
+    openingHours: place?.openingHours || geocoded?.openingHours || '', priceRange: place?.priceRange || '',
+    rating: place?.rating || '', googleMapsUrl: url, relatedPlaceId: existingPlace?._id || '',
+    priority: '', status: 'Suggested', thumbnailUrl: place?.photoUrl || geocoded?.image || '',
+    note: 'เพิ่มจากชื่อสถานที่บน Google Maps'
+  };
+}
+
 function showView(name) {
   state.view = name;
   detailView.hidden = true;
   document.querySelector('.bottom-nav').classList.remove('behind-detail');
   views.forEach((view) => view.classList.toggle('active', view.id === name + '-view'));
-  navButtons.forEach((button) => button.classList.toggle('active', button.dataset.tab === name));
+  navButtons.forEach((button) => {
+    const active = button.dataset.tab === name;
+    button.classList.toggle('active', active);
+    if (active) button.setAttribute('aria-current', 'page');
+    else button.removeAttribute('aria-current');
+  });
   if (name === 'map') setTimeout(() => {
     state.map?.invalidateSize();
     if (!state.userLocation && !state.mapLocateAttempted) requestMyLocation(true);
@@ -1643,26 +1696,36 @@ quickLinkForm?.addEventListener('submit', async (event) => {
   const saveButton = quickLinkForm.querySelector('.save-link');
   const kind = quickLinkForm.elements.namedItem('Kind').value;
   const rawUrl = quickLinkForm.elements.namedItem('URL').value.trim();
+  const rawPlaceName = quickLinkForm.elements.namedItem('PlaceName').value.trim();
   const detection = document.querySelector('#link-detection');
+  let shortMapsUrl = false;
   try {
     const submittedUrl = new URL(rawUrl);
-    if (/^(maps\.app\.goo\.gl|goo\.gl|g\.co)$/i.test(submittedUrl.hostname.replace(/^www\./, ''))) {
+    shortMapsUrl = /^(maps\.app\.goo\.gl|goo\.gl|g\.co)$/i.test(submittedUrl.hostname.replace(/^www\./, ''));
+    if (shortMapsUrl && !rawPlaceName) {
       window.open(submittedUrl.href, '_blank', 'noopener,noreferrer');
       detection.className = 'link-detection error';
-      detection.innerHTML = '<span>↗</span><div><strong>เปิดลิงก์ใน Google Maps แล้ว</strong><p>คัดลอก URL แบบเต็มจากแถบที่อยู่ แล้วกลับมาวางแทนลิงก์ย่อนี้ — จะยังไม่มีข้อมูลถูกบันทึก</p></div>';
-      quickLinkForm.elements.namedItem('URL').select();
+      detection.innerHTML = '<span>↗</span><div><strong>เปิดลิงก์ใน Google Maps แล้ว</strong><p>บนมือถือ ให้คัดลอกชื่อร้านแล้วกลับมาพิมพ์ในช่องชื่อสถานที่ด้านล่าง — จะยังไม่มีข้อมูลถูกบันทึก</p></div>';
+      quickLinkForm.elements.namedItem('PlaceName').focus();
       return;
     }
   } catch { /* analyzeSharedLink shows the normal invalid-link message below */ }
+  if (!rawUrl && !(kind === 'food' && rawPlaceName)) {
+    detection.className = 'link-detection error';
+    detection.innerHTML = '<span>!</span><div><strong>ยังเพิ่มไม่ได้</strong><p>วางลิงก์ หรือพิมพ์ชื่อร้านก่อน</p></div>';
+    return;
+  }
   saveButton.disabled = true;
   saveButton.textContent = 'กำลังตรวจ…';
   detection.className = 'link-detection loading';
   detection.innerHTML = '<span>↻</span><div><strong>กำลังอ่านลิงก์</strong><p>ตรวจชื่อ แพลตฟอร์ม พื้นที่ และพิกัด</p></div>';
   try {
-    const detected = await analyzeSharedLink(rawUrl, kind);
+    const detected = kind === 'food' && rawPlaceName && (!rawUrl || shortMapsUrl)
+      ? await analyzePlaceName(rawPlaceName)
+      : await analyzeSharedLink(rawUrl, kind);
     detection.className = detected.nameMissing ? 'link-detection error' : 'link-detection success';
     if (detected.nameMissing) {
-      detection.innerHTML = `<span>!</span><div><strong>ลิงก์นี้ไม่มีชื่อสถานที่</strong><p>เป็นลิงก์ของ "แผนที่" ไม่ใช่ของร้าน — เปิดหน้าร้านใน Google Maps แล้วกด แชร์ จากในหน้านั้น จะได้ชื่อและที่อยู่ครบ</p></div>`;
+      throw new Error('ลิงก์นี้ไม่มีชื่อร้าน กรุณาพิมพ์ชื่อสถานที่ในช่องด้านบนก่อนบันทึก');
     } else {
       detection.innerHTML = `<span>✓</span><div><strong>${esc(detected.name)}</strong><p>${esc([detected.platform, detected.area, detected.city].filter(Boolean).join(' · ') || 'ตรวจลิงก์แล้ว')}</p></div>`;
     }
@@ -1708,7 +1771,7 @@ document.addEventListener('click', async (event) => {
     return;
   }
   const tab = target.closest('[data-tab]');
-  if (tab) { showView(tab.dataset.tab); return; }
+  if (tab && !tab.closest('.bottom-nav')) { showView(tab.dataset.tab); return; }
   const date = target.closest('[data-plan-date]');
   if (date) { state.planDate = date.dataset.planDate; renderPlan(); return; }
   if (target.closest('[data-add-plan]')) { openPlanEditor(); return; }
@@ -1749,11 +1812,26 @@ document.addEventListener('click', async (event) => {
   if (target.closest('[data-close-quick-link]')) { closeQuickLink(); return; }
   const filter = target.closest('[data-booking-filter]');
   if (filter) { state.bookingFilter = filter.dataset.bookingFilter; renderBookings(); return; }
+  const mapScope = target.closest('[data-map-scope]');
+  if (mapScope) {
+    state.mapScope = mapScope.dataset.mapScope;
+    document.querySelectorAll('[data-map-scope]').forEach((button) => {
+      const active = button === mapScope;
+      button.classList.toggle('active', active);
+      button.setAttribute('aria-pressed', String(active));
+    });
+    updateMapMarkers();
+    return;
+  }
   const mapFilter = target.closest('[data-map-filter]');
   if (mapFilter) {
     state.mapFilter = mapFilter.dataset.mapFilter;
     setMapSheetExpanded(true);
-    document.querySelectorAll('[data-map-filter]').forEach((button) => button.classList.toggle('active', button === mapFilter));
+    document.querySelectorAll('[data-map-filter]').forEach((button) => {
+      const active = button === mapFilter;
+      button.classList.toggle('active', active);
+      button.setAttribute('aria-pressed', String(active));
+    });
     updateMapMarkers();
     return;
   }
