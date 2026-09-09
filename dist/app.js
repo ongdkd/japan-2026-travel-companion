@@ -1290,60 +1290,6 @@ async function oEmbedMetadata(url, platform) {
   }
 }
 
-// Google Maps' own "Share" sheet almost always hands out a short redirect link
-// (maps.app.goo.gl/XXXX, goo.gl/maps/XXXX, g.co/kgs/XXXX) with no place name or coordinates in the
-// URL at all — the same shape of problem TikTok's share links had. There's no public Maps oEmbed
-// API to resolve it with, so this asks a public CORS-open reflector to fetch it server-side and
-// report back the final URL after redirects, which (for a real Google Maps link) is the long
-// google.com/maps/place/<Name>/@lat,lng... form the rest of this function already knows how to read.
-// ponytail: public no-key CORS proxies, no SLA — allorigins was timing out outright, which is why
-// saved rows kept the raw short link and the fallback name. Two of them with a hard timeout each
-// covers one being down; the real fix, if both keep failing, is a tiny redirect-resolver endpoint
-// of our own (a Cloud Function that returns the Location header).
-const MAPS_RESOLVER_TIMEOUT_MS = 8000;
-
-// Set this to your own resolver (see maps-resolver/worker.js) and short links start working
-// properly. Google's first response to a short link already names the place in its Location
-// header — the public proxies below lose it because they follow the whole redirect chain, and they
-// time out often enough that the name usually falls back to the placeholder instead.
-const MAPS_RESOLVER_URL = '';
-
-async function fetchWithTimeout(url) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), MAPS_RESOLVER_TIMEOUT_MS);
-  try {
-    return await fetch(url, { signal: controller.signal });
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-async function resolveGoogleMapsShortLink(url) {
-  const target = encodeURIComponent(url);
-  const attempts = [
-    // Reads the Location header of the first response, which is the only place the name survives.
-    async () => {
-      if (!MAPS_RESOLVER_URL) return '';
-      const response = await fetchWithTimeout(MAPS_RESOLVER_URL + '?url=' + target);
-      return (await response.json())?.url || '';
-    },
-    // Reports the final URL after redirects directly, which is exactly what we need.
-    async () => (await (await fetchWithTimeout('https://api.allorigins.win/get?url=' + target)).json())?.status?.url || '',
-    // Returns the destination page instead; the long maps URL is in its own markup.
-    async () => {
-      const text = await (await fetchWithTimeout('https://api.codetabs.com/v1/proxy?quest=' + target)).text();
-      return text.match(/https:\/\/www\.google\.com\/maps\/place\/[^"'<>\\ ]*/)?.[0] || '';
-    }
-  ];
-  for (const attempt of attempts) {
-    try {
-      const finalUrl = await attempt();
-      if (finalUrl && finalUrl !== url && /google\.[^/]+\/maps/.test(finalUrl) && hasPlaceInMapsUrl(finalUrl)) return finalUrl;
-    } catch { /* proxy down, blocked or too slow — try the next one */ }
-  }
-  return '';
-}
-
 // Google does not hand the same destination to everyone. Followed by a phone that has the Maps app,
 // a share link opens the restaurant; followed by a proxy server — or by a desktop browser with no
 // Google session — the very same link lands on ".../place//@13.75,100.52" instead: an empty place
@@ -1547,18 +1493,8 @@ async function analyzeSharedLink(rawUrl, kind) {
   else if (/facebook\.com|fb\.watch/.test(host)) platform = 'Facebook';
   else if (/google\.[^/]+|goo\.gl/.test(host)) platform = 'Google Maps';
 
-  // Only genuine short-link hosts need the resolve step — a link that's already the long
-  // google.com/maps/place/... form has everything we need right in the URL already.
-  let shortLinkUnresolved = false;
   if (platform === 'Google Maps' && /^(maps\.app\.goo\.gl|goo\.gl|g\.co)$/i.test(host)) {
-    const resolved = await resolveGoogleMapsShortLink(parsed.href);
-    shortLinkUnresolved = !resolved;
-    if (resolved) {
-      try {
-        parsed = new URL(resolved);
-        host = parsed.hostname.replace(/^www\./, '').toLowerCase();
-      } catch { /* keep the original short link if the resolved value is somehow invalid */ }
-    }
+    throw new Error('เปิดลิงก์ที่เพิ่งเปิด แล้วคัดลอก URL แบบเต็มจากแถบที่อยู่มาวางแทน');
   }
 
   const pathPlace = parsed.pathname.match(/\/place\/([^/]+)/i)?.[1];
@@ -1612,7 +1548,7 @@ async function analyzeSharedLink(rawUrl, kind) {
     url: resolvedUrl, platform, name,
     category: kind === 'food' || looksFood ? 'Food' : 'Travel',
     area: area?.label || '', city: cityForArea(area?.label || ''),
-    nameMissing, shortLinkUnresolved,
+    nameMissing,
     latitude: usableCoords?.[1] || place?.latitude || geocoded?.latitude || '',
     longitude: usableCoords?.[2] || place?.longitude || geocoded?.longitude || '',
     // Google's own formatted address beats both the share link's and a geocoder's guess.
@@ -1708,18 +1644,24 @@ quickLinkForm?.addEventListener('submit', async (event) => {
   const kind = quickLinkForm.elements.namedItem('Kind').value;
   const rawUrl = quickLinkForm.elements.namedItem('URL').value.trim();
   const detection = document.querySelector('#link-detection');
+  try {
+    const submittedUrl = new URL(rawUrl);
+    if (/^(maps\.app\.goo\.gl|goo\.gl|g\.co)$/i.test(submittedUrl.hostname.replace(/^www\./, ''))) {
+      window.open(submittedUrl.href, '_blank', 'noopener,noreferrer');
+      detection.className = 'link-detection error';
+      detection.innerHTML = '<span>↗</span><div><strong>เปิดลิงก์ใน Google Maps แล้ว</strong><p>คัดลอก URL แบบเต็มจากแถบที่อยู่ แล้วกลับมาวางแทนลิงก์ย่อนี้ — จะยังไม่มีข้อมูลถูกบันทึก</p></div>';
+      quickLinkForm.elements.namedItem('URL').select();
+      return;
+    }
+  } catch { /* analyzeSharedLink shows the normal invalid-link message below */ }
   saveButton.disabled = true;
   saveButton.textContent = 'กำลังตรวจ…';
   detection.className = 'link-detection loading';
   detection.innerHTML = '<span>↻</span><div><strong>กำลังอ่านลิงก์</strong><p>ตรวจชื่อ แพลตฟอร์ม พื้นที่ และพิกัด</p></div>';
   try {
     const detected = await analyzeSharedLink(rawUrl, kind);
-    // Two different failures used to look identical (a placeholder row either way): the link had no
-    // place in it, or we never got to read the link at all because the redirect resolver was down.
-    detection.className = detected.nameMissing || detected.shortLinkUnresolved ? 'link-detection error' : 'link-detection success';
-    if (detected.shortLinkUnresolved) {
-      detection.innerHTML = `<span>!</span><div><strong>เปิดลิงก์ย่อไม่สำเร็จ</strong><p>ตัวแปลงลิงก์ล่มหรือเน็ตไม่ถึง — ลองใหม่อีกครั้ง หรือเปิดลิงก์ในเบราว์เซอร์แล้วคัดลอกลิงก์ยาว (google.com/maps/place/...) มาวางแทน</p></div>`;
-    } else if (detected.nameMissing) {
+    detection.className = detected.nameMissing ? 'link-detection error' : 'link-detection success';
+    if (detected.nameMissing) {
       detection.innerHTML = `<span>!</span><div><strong>ลิงก์นี้ไม่มีชื่อสถานที่</strong><p>เป็นลิงก์ของ "แผนที่" ไม่ใช่ของร้าน — เปิดหน้าร้านใน Google Maps แล้วกด แชร์ จากในหน้านั้น จะได้ชื่อและที่อยู่ครบ</p></div>`;
     } else {
       detection.innerHTML = `<span>✓</span><div><strong>${esc(detected.name)}</strong><p>${esc([detected.platform, detected.area, detected.city].filter(Boolean).join(' · ') || 'ตรวจลิงก์แล้ว')}</p></div>`;
