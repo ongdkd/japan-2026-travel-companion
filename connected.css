@@ -104,7 +104,8 @@
 @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important}}
 
 /* Nearby map — map and ranked places work together like a ride-hailing picker. */
-.bottom-nav{z-index:900}
+.bottom-nav{z-index:1200;isolation:isolate;pointer-events:auto}
+.bottom-nav button{pointer-events:auto;touch-action:manipulation}
 .toast{z-index:1100}
 #real-map{inset:0 0 calc(76px + env(safe-area-inset-bottom));z-index:0}
 .map-controls{position:relative;z-index:auto;inset:auto;padding:0 14px}
@@ -121,6 +122,9 @@
 .filter-row{display:flex;gap:7px;padding:9px 0 12px;overflow-x:auto;scrollbar-width:none}.filter-row::-webkit-scrollbar{display:none}
 .filter-row button{flex:0 0 auto;min-height:40px;padding:0 13px;border:1px solid var(--line);background:#fff;box-shadow:none;font-size:.875rem}
 .filter-row button.active{background:var(--ink);border-color:var(--ink);color:#fff}
+.map-scope-row{display:flex;gap:6px;padding:9px 0 0;overflow-x:auto;scrollbar-width:none}.map-scope-row::-webkit-scrollbar{display:none}
+.map-scope-row button{flex:0 0 auto;min-height:34px;padding:0 11px;border:1px solid #cfdad5;border-radius:999px;background:#edf5f1;color:#315f50;font-size:.78rem;font-weight:700;touch-action:manipulation}
+.map-scope-row button.active{border-color:#27765e;background:#27765e;color:#fff}
 .map-results-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:4px 16px 12px}
 .map-results-heading div{min-width:0}.map-results-heading strong{display:block;font-size:1.05rem}.map-results-heading span{display:block;margin-top:2px;color:var(--muted);font-size:.78rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .map-results-heading button{flex:0 0 auto;min-height:42px;border:0;border-radius:12px;background:#e7eee9;color:#1f6a52;padding:9px 12px;font-size:.78rem;font-weight:700}
@@ -150,6 +154,10 @@
 .link-detection{display:grid;grid-template-columns:38px 1fr;gap:10px;align-items:center;padding:12px;border:1px solid var(--line);border-radius:14px;background:var(--surface)}
 .link-detection>span{display:grid;place-items:center;width:36px;height:36px;border-radius:50%;background:#ebe8e2;font-weight:800}.link-detection strong{display:block;font-size:.8rem}.link-detection p{margin:2px 0 0;color:var(--muted);font-size:.7rem;line-height:1.4}.link-detection.loading>span{animation:spin 1s linear infinite}.link-detection.success{border-color:#afd1c3;background:#edf7f2}.link-detection.success>span{background:#d5eee4;color:#1f6a52}.link-detection.error{border-color:#e9bcb7;background:#fff5f3}.link-detection.error>span{background:#f4d8d4;color:#a23c32}
 @keyframes spin{to{transform:rotate(360deg)}}
+
+.discovery-card__verified{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:-1px 0 9px;color:#1f6a52;font-size:.7rem;font-weight:700}
+.discovery-card__verified span{min-width:0}
+.discovery-card__verified button{flex:0 0 auto;min-height:30px;padding:3px 8px;border:1px solid #afd1c3;border-radius:999px;background:#edf7f2;color:#1f6a52;font:700 .68rem/1 "Noto Sans Thai",sans-serif;touch-action:manipulation}
 
 @media(max-height:700px){.map-results-panel.collapsed{transform:translateY(calc(100% - min(50dvh,350px)))}}
 @media(min-width:700px){.map-results-panel{bottom:76px}.map-results-panel.collapsed{transform:translateY(calc(100% - 390px))}.plan-editor{max-height:820px}.plan-editor form{max-height:820px}}

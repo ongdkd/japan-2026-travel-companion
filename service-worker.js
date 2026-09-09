@@ -1,4 +1,4 @@
-const CACHE = 'japan-2026-v8';
+const CACHE = 'japan-2026-v9';
 const APP_SHELL = [
   './',
   './index.html',
@@ -6,6 +6,7 @@ const APP_SHELL = [
   './connected.css',
   './data.js',
   './live-sync.js',
+  './discovery.js',
   './app.js',
   './manifest.webmanifest',
   './app-icon.svg',
@@ -35,6 +36,6 @@ self.addEventListener('fetch', (event) => {
         caches.open(CACHE).then((cache) => cache.put(event.request, copy));
         return response;
       })
-      .catch(() => caches.match(event.request).then((cached) => cached || caches.match('./index.html')))
+      .catch(() => caches.match(event.request).then((cached) => cached || (event.request.mode === 'navigate' ? caches.match('./index.html') : Response.error())))
   );
 });

@@ -8,7 +8,8 @@
 
 const GEMINI_KEY_STORAGE = 'japan2026.geminiKey';
 const GEMINI_MODEL_STORAGE = 'japan2026.geminiModel';
-const DISCOVERY_CACHE_STORAGE = 'japan2026.discovery.v1';
+const DISCOVERY_CACHE_STORAGE = 'japan2026.discovery.v2';
+const PLACE_IMAGE_CACHE_STORAGE = 'japan2026.discoveryPlaceImages.v1';
 // Google renames/retires "flash" model ids fairly often. Try the newest first, then fall back
 // to older ones automatically — whichever one actually works gets remembered so later calls
 // go straight to it instead of re-probing every time.
@@ -18,6 +19,7 @@ const DISCOVERY_CACHE_STORAGE = 'japan2026.discovery.v1';
 // add it back, Google returns a hard "no longer available" error for it now.
 const GEMINI_MODEL_CANDIDATES = ['gemini-3.8-flash', 'gemini-3.5-flash', 'gemini-3.1-flash-lite'];
 const DISCOVERY_CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
+const PLACE_IMAGE_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 // Reaching the end of a carousel fetches one more batch automatically — capped per city so an
 // idle finger bouncing at the edge can't quietly burn through the whole free Gemini quota.
 const MAX_DISCOVERY_LOAD_MORE = 2;
@@ -153,30 +155,40 @@ function activeDiscoveryCity() {
   return discoveryState.city || tripCityForToday();
 }
 
-function imageUrlFor(query) {
-  const tags = String(query || 'japan travel')
-    .split(/[,\s]+/).filter(Boolean).slice(0, 4).join(',');
-  return 'https://loremflickr.com/640/480/' + encodeURIComponent(tags) + '?lock=' + Math.abs(hashCode(tags));
-}
-
-// LoremFlickr is a free keyless service but goes down/unreachable sometimes. picsum.photos is a
-// reliable keyless backup (no thematic matching to the query, but always shows *something*
-// rather than a blank card) used only when the primary fails to actually load.
-function fallbackImageUrlFor(query) {
-  return 'https://picsum.photos/seed/discover' + Math.abs(hashCode(String(query || 'japan travel'))) + '/640/480';
-}
-
 // A photo OF the actual place, rather than a stock shot that merely matches its tags: Wikipedia's
 // search API is keyless and CORS-open (origin=*) and hands back the article thumbnail. The search
 // is deliberately restricted to `intitle:` — a plain full-text search happily returns the article
 // for the city when the place itself has no article, and a confident photo of the wrong place is
-// worse than an honest stock one. Trendy cafes mostly have no article and keep the stock image.
+// worse than an honest neutral placeholder.
 const placeImageCache = new Map();
+
+function readPlaceImageStore() {
+  try { return JSON.parse(localStorage.getItem(PLACE_IMAGE_CACHE_STORAGE) || '{}'); } catch { return {}; }
+}
+
+function loadCachedPlaceImage(query) {
+  const entry = readPlaceImageStore()[query];
+  if (!entry || Date.now() - Number(entry.savedAt || 0) > PLACE_IMAGE_CACHE_TTL_MS) return null;
+  return String(entry.url || '');
+}
+
+function saveCachedPlaceImage(query, url) {
+  try {
+    const store = readPlaceImageStore();
+    store[query] = { url: String(url || ''), savedAt: Date.now() };
+    localStorage.setItem(PLACE_IMAGE_CACHE_STORAGE, JSON.stringify(store));
+  } catch { /* ignore storage limits/private mode */ }
+}
 
 async function realImageUrlFor(place) {
   const query = String(place || '').trim();
   if (!query) return '';
   if (placeImageCache.has(query)) return placeImageCache.get(query);
+  const persisted = loadCachedPlaceImage(query);
+  if (persisted !== null) {
+    placeImageCache.set(query, persisted);
+    return persisted;
+  }
   // With a Maps key configured, Google's own photo of the place is the best answer and covers the
   // small cafes and shops Wikipedia has never heard of. Without one, the Wikipedia lookup below is
   // still the free fallback. (placesLookup lives in app.js — same global scope, and this only runs
@@ -184,6 +196,7 @@ async function realImageUrlFor(place) {
   const fromGoogle = await placesLookup(query);
   if (fromGoogle?.photoUrl) {
     placeImageCache.set(query, fromGoogle.photoUrl);
+    saveCachedPlaceImage(query, fromGoogle.photoUrl);
     return fromGoogle.photoUrl;
   }
   let url = '';
@@ -195,8 +208,9 @@ async function realImageUrlFor(place) {
       const pages = (await response.json()).query?.pages || {};
       url = Object.values(pages)[0]?.thumbnail?.source || '';
     }
-  } catch { /* offline or blocked — the stock image below still shows */ }
+  } catch { /* offline or blocked — keep the neutral placeholder */ }
   placeImageCache.set(query, url);
+  saveCachedPlaceImage(query, url);
   return url;
 }
 
@@ -213,30 +227,33 @@ function loadFirstImage(sources) {
   });
 }
 
-// Cards render with data-img/data-img-fallback instead of an inline background-image so we can
-// actually detect a failed load (a CSS background-image has no error event) and fall down the
-// list, or leave the gradient+icon placeholder if every source fails.
+// Only use a photo tied to the exact place. A neutral placeholder is more trustworthy than an
+// attractive but unrelated stock image.
 async function hydrateDiscoveryImage(el) {
-  // Discovery cards always carry a stock image to fall back on; food cards deliberately carry only
-  // a place name, so a place Wikipedia doesn't know keeps its icon instead of a stranger's photo.
-  if (el.dataset.imgHydrated || (!el.dataset.img && !el.dataset.imgPlace)) return;
+  if (el.dataset.imgHydrated || !el.dataset.imgPlace) return;
   el.dataset.imgHydrated = '1';
   const real = await realImageUrlFor(el.dataset.imgPlace);
-  const url = await loadFirstImage([real, el.dataset.img, el.dataset.imgFallback].filter(Boolean));
+  const url = await loadFirstImage([real].filter(Boolean));
   if (!url) return;
   el.style.backgroundImage = "url('" + url + "')";
   el.classList.add('is-loaded');
 }
 
+const discoveryImageObserver = 'IntersectionObserver' in window
+  ? new IntersectionObserver((entries) => {
+      entries.filter((entry) => entry.isIntersecting).forEach((entry) => {
+        discoveryImageObserver.unobserve(entry.target);
+        hydrateDiscoveryImage(entry.target);
+      });
+    }, { rootMargin: '240px' })
+  : null;
+
 function hydrateDiscoveryImages(root) {
   if (!root) return;
-  root.querySelectorAll('[data-img], [data-img-place]').forEach(hydrateDiscoveryImage);
-}
-
-function hashCode(text) {
-  let hash = 0;
-  for (let i = 0; i < text.length; i += 1) { hash = (hash << 5) - hash + text.charCodeAt(i); hash |= 0; }
-  return hash;
+  root.querySelectorAll('[data-img-place]').forEach((el) => {
+    if (discoveryImageObserver) discoveryImageObserver.observe(el);
+    else hydrateDiscoveryImage(el);
+  });
 }
 
 function mapUrlForSuggestion(item) {
@@ -257,13 +274,20 @@ function isAuthFormatIssueMessage(message) {
 function buildDiscoveryPrompt(city, options = {}) {
   const { excludeTitles, focus } = options;
   const trip = DATA.trip || {};
+  const today = isoDate(japanToday());
+  const tripStart = String(trip.startDate || today).slice(0, 10);
+  const tripEnd = String(trip.endDate || tripStart).slice(0, 10);
   const lines = [
     'คุณเป็นเพื่อนสายเที่ยวที่รู้ลึกเรื่องที่เที่ยว/ที่กิน/ที่ช้อปสายฮิปในญี่ปุ่น กำลังแนะนำที่เที่ยวให้เพื่อนคนไทยวัย Gen Z (ประมาณ 18-27 ปี) ที่กำลังเดินทางไปญี่ปุ่น',
-    `ทริป: ${trip.name || 'Japan 2026'} ช่วงวันที่ ${trip.startDate || ''} ถึง ${trip.endDate || ''}`,
-    `กำลังอยู่ที่หรือวางแผนอยู่ใกล้เมือง: ${city}, ประเทศญี่ปุ่น`
+    `วันนี้ตามเวลาญี่ปุ่นคือ ${today}`,
+    `ทริป: ${trip.name || 'Japan 2026'} ช่วงวันที่ ${tripStart} ถึง ${tripEnd}`,
+    `กำลังอยู่ที่หรือวางแผนอยู่ใกล้เมือง: ${city}, ประเทศญี่ปุ่น`,
+    'ใช้ Google Search ตรวจข้อมูลล่าสุดของทุกรายการก่อนตอบ และใส่ URL แหล่งข้อมูลที่ยืนยันวันเปิด/วันจัดจริง',
+    `สถานที่ถาวรต้องยังเปิดดำเนินการ ณ ${today}; อีเวนต์ ป็อปอัพ คาเฟ่คอลแลบ หรือนิทรรศการชั่วคราวต้องยังไม่จบ และต้องมีช่วงวันที่ทับกับ ${tripStart} ถึง ${tripEnd}`,
+    'ถ้ายืนยันสถานะหรือวันที่จากแหล่งข้อมูลไม่ได้ ให้ตัดรายการนั้นออก ห้ามเดา'
   ];
   if (focus === 'anime') {
-    lines.push('รอบนี้ขอเฉพาะที่สายอนิเมะ/มังงะ/เกมเท่านั้น เช่น ร้านฟิกเกอร์ ร้านการ์ตูนมือสอง ตู้กาชาปอง เมดคาเฟ่ คาเฟ่ธีมอนิเมะ ป็อปอัพสโตร์/นิทรรศการอนิเมะ เกมเซ็นเตอร์ ร้านโดจิน หรืออีเวนต์คอสเพลย์ (ไม่เอาร้านอาหารทั่วไป ห้างทั่วไป เทศกาลทั่วไป หรือธรรมชาติ) ประมาณ 8 รายการ');
+    lines.push('รอบนี้ขอเฉพาะสายอนิเมะ/มังงะ/เกมและคอลแลบ ประมาณ 8 รายการ โดยให้ความสำคัญกับอาคารเกม GiGO (เดิม SEGA), SEGA-related arcade, Bandai Namco, Capcom/Nintendo, ร้านฟิกเกอร์/กาชาปอง, character cafe, collaboration cafe, pop-up store, นิทรรศการ และอีเวนต์คอลแลบที่กำลังจัดหรือจะจัดตรงกับวันทริป (ไม่เอาร้านอาหารทั่วไป ห้างทั่วไป เทศกาลทั่วไป หรือธรรมชาติ)');
   } else if (focus === 'shop') {
     lines.push('รอบนี้ขอเฉพาะร้านอาหาร คาเฟ่ ของกินที่กำลังฮิต ห้างสรรพสินค้า ตลาด หรือแหล่งช้อปปิ้งสายเทรนด์เท่านั้น (ไม่เอาเทศกาล ธรรมชาติ หรือที่สายอนิเมะ) ประมาณ 8 รายการ');
   } else if (focus === 'other') {
@@ -273,14 +297,14 @@ function buildDiscoveryPrompt(city, options = {}) {
   }
   lines.push('เลือกที่ที่ถูกจริตสาย Gen Z: ถ่ายรูปลงโซเชียลได้สวย (aesthetic/instagrammable), กำลังเป็นกระแสใน TikTok/IG, คาเฟ่ธีมเก๋ ๆ, ร้านของกินที่กำลังไวรัล, ตลาดนัด/ตลาดกลางคืนสายชิล, ร้านมือสอง/วินเทจ, ป็อปอัพสโตร์, สตรีทอาร์ต, จุดถ่ายรูปลับที่คนไทยอาจไม่รู้จัก — เน้นสิ่งเหล่านี้มากกว่าสถานที่ท่องเที่ยวแบบดั้งเดิมที่ใคร ๆ ก็รู้จัก');
   if (!focus) {
-    lines.push('ต้องมีอย่างน้อย 3 รายการเป็นร้านอาหาร คาเฟ่ หรือของกินที่กำลังฮิต, อย่างน้อย 2 รายการเป็นห้างสรรพสินค้า ตลาด หรือแหล่งช้อปปิ้งสายเทรนด์ และอย่างน้อย 3 รายการเป็นที่สายอนิเมะ/มังงะ/เกม (ร้านฟิกเกอร์ ตู้กาชาปอง เมดคาเฟ่ คาเฟ่ธีมอนิเมะ นิทรรศการหรือป็อปอัพอนิเมะ เกมเซ็นเตอร์ อีเวนต์คอสเพลย์) ที่เหลือเป็นเทศกาล ธรรมชาติ หรือสถานที่ท่องเที่ยวอื่น ๆ ที่มีมุมถ่ายรูปเก๋');
+    lines.push('ต้องมีอย่างน้อย 3 รายการเป็นร้านอาหาร คาเฟ่ หรือของกินที่กำลังฮิต, อย่างน้อย 2 รายการเป็นห้างสรรพสินค้า ตลาด หรือแหล่งช้อปปิ้งสายเทรนด์ และอย่างน้อย 3 รายการเป็นสายอนิเมะ/มังงะ/เกม/คอลแลบ โดยให้ค้น GiGO (เดิม SEGA), เกมเซ็นเตอร์, character cafe, collaboration cafe, นิทรรศการหรือป็อปอัพที่ตรงวันทริป ที่เหลือเป็นเทศกาล ธรรมชาติ หรือสถานที่ท่องเที่ยวอื่น ๆ ที่มีมุมถ่ายรูปเก๋');
   }
   lines.push('เน้นสิ่งที่เหมาะกับช่วงเดือนตุลาคม เช่น เทศกาลตามฤดูกาล ใบไม้เปลี่ยนสี ตลาดกลางคืน นิทรรศการ หรือจุดท่องเที่ยวที่คนไทยอาจไม่รู้จักมาก่อน');
   lines.push('เขียน description ด้วยโทนเป็นกันเองแบบเพื่อนคุยกัน สนุก กระชับ ใช้สแลงไทยร่วมสมัยได้พอประมาณ (ไม่ทางการ ไม่เวิ่นเว้อ) แต่ยังให้ข้อมูลที่เป็นประโยชน์จริง');
   if (excludeTitles && excludeTitles.length) {
     lines.push('ห้ามแนะนำที่ซ้ำหรือคล้ายกับรายการที่เคยแนะนำไปแล้วนี้ ขอเป็นที่ใหม่ล้วน: ' + excludeTitles.join(', '));
   }
-  lines.push('ตอบเป็น JSON array เท่านั้น (ห้ามมีข้อความอื่นนอกเหนือ JSON) แต่ละรายการมีฟิลด์: title, category (หมวดสั้น ๆ ภาษาไทย เช่น เทศกาล, ธรรมชาติ, ช้อปปิ้ง, อาหาร, อนิเมะ), city, area, description (ภาษาไทย 1-2 ประโยค โทน Gen Z ตามด้านบน), best_time, image_query (คำค้นภาษาอังกฤษสั้น 2-4 คำ เน้นมุมที่ดูสวย aesthetic เหมาะลงโซเชียล), map_query (ชื่อสถานที่ภาษาอังกฤษสำหรับค้นใน Google Maps)');
+  lines.push('ตอบเป็น JSON array เท่านั้น (ห้ามมีข้อความอื่นนอกเหนือ JSON) แต่ละรายการมีฟิลด์: title, category (หมวดสั้น ๆ ภาษาไทย เช่น เทศกาล, ธรรมชาติ, ช้อปปิ้ง, อาหาร, อนิเมะ, คอลแลบ), city, area, description (ภาษาไทย 1-2 ประโยค), best_time, image_query (คำค้นชื่อสถานที่ภาษาอังกฤษ), map_query (ชื่อสถานที่ภาษาอังกฤษแบบเจาะจงสำหรับ Google Maps), availability_status (permanent, open_now หรือ upcoming เท่านั้น), start_date (YYYY-MM-DD หรือค่าว่างสำหรับสถานที่ถาวร), end_date (YYYY-MM-DD หรือค่าว่างสำหรับสถานที่ถาวร), source_url (URL หน้าเว็บที่ยืนยันสถานะ/วันที่โดยตรง), verification_note (สรุปสั้น ๆ ภาษาไทยว่าเปิดอยู่หรือจัดวันไหน)');
   return lines.join('\n');
 }
 
@@ -307,6 +331,7 @@ async function callGeminiModel(prompt, key, model) {
   const endpoint = 'https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent?key=' + encodeURIComponent(key);
   const body = {
     contents: [{ role: 'user', parts: [{ text: prompt }] }],
+    tools: [{ google_search: {} }],
     generationConfig: {
       responseMimeType: 'application/json',
       responseSchema: {
@@ -321,9 +346,14 @@ async function callGeminiModel(prompt, key, model) {
             description: { type: 'STRING' },
             best_time: { type: 'STRING' },
             image_query: { type: 'STRING' },
-            map_query: { type: 'STRING' }
+            map_query: { type: 'STRING' },
+            availability_status: { type: 'STRING' },
+            start_date: { type: 'STRING' },
+            end_date: { type: 'STRING' },
+            source_url: { type: 'STRING' },
+            verification_note: { type: 'STRING' }
           },
-          required: ['title', 'category', 'city', 'description']
+          required: ['title', 'category', 'city', 'description', 'availability_status', 'source_url', 'verification_note']
         }
       }
     }
@@ -374,6 +404,49 @@ async function callGemini(prompt) {
   throw lastError;
 }
 
+function discoveryIsoDate(value) {
+  const text = String(value || '').trim().slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(text) && !Number.isNaN(Date.parse(text + 'T00:00:00Z')) ? text : '';
+}
+
+function isVerifiedAvailable(item) {
+  const status = String(item.availability_status || '').toLowerCase().trim();
+  if (!['permanent', 'open_now', 'upcoming'].includes(status)) return false;
+  if (safeUrl(item.source_url) === '#') return false;
+  const today = isoDate(japanToday());
+  const tripStart = String(DATA.trip?.startDate || today).slice(0, 10);
+  const tripEnd = String(DATA.trip?.endDate || tripStart).slice(0, 10);
+  const start = discoveryIsoDate(item.start_date);
+  const end = discoveryIsoDate(item.end_date);
+  if (end && end < today) return false;
+  const text = [item.title, item.category, item.description, item.verification_note].join(' ');
+  const timed = status === 'upcoming' || /event|collab|collaboration|pop.?up|temporary|อีเวนต์|คอลแลบ|ป็อปอัพ|นิทรรศการ/i.test(text);
+  if (timed && (!start || !end)) return false;
+  if (timed && (start > tripEnd || end < tripStart)) return false;
+  return true;
+}
+
+function normalizeDiscoveryItem(item, index, city, stamp) {
+  return {
+    id: 'sug_' + stamp + '_' + index,
+    title: item.title || 'กิจกรรมแนะนำ',
+    category: item.category || 'แนะนำ',
+    city: item.city || city,
+    area: item.area || '',
+    description: item.description || '',
+    best_time: item.best_time || '',
+    image_query: item.image_query || item.title || city,
+    map_query: item.map_query || item.title || city,
+    availability_status: item.availability_status || '',
+    start_date: discoveryIsoDate(item.start_date),
+    end_date: discoveryIsoDate(item.end_date),
+    source_url: safeUrl(item.source_url),
+    verification_note: item.verification_note || '',
+    verified_on: isoDate(japanToday()),
+    added: false
+  };
+}
+
 async function fetchDiscovery(forceCity) {
   const city = forceCity || activeDiscoveryCity();
   discoveryState.loading = true;
@@ -383,18 +456,9 @@ async function fetchDiscovery(forceCity) {
   try {
     const raw = await callGemini(buildDiscoveryPrompt(city));
     const stamp = Date.now();
-    const items = raw.slice(0, 12).map((item, index) => ({
-      id: 'sug_' + stamp + '_' + index,
-      title: item.title || 'กิจกรรมแนะนำ',
-      category: item.category || 'แนะนำ',
-      city: item.city || city,
-      area: item.area || '',
-      description: item.description || '',
-      best_time: item.best_time || '',
-      image_query: item.image_query || item.title || city,
-      map_query: item.map_query || item.title || city,
-      added: false
-    }));
+    const items = raw.filter(isVerifiedAvailable).slice(0, 12)
+      .map((item, index) => normalizeDiscoveryItem(item, index, city, stamp));
+    if (!items.length) throw new Error('ยังไม่พบสถานที่หรืออีเวนต์ที่ยืนยันวันเปิดและแหล่งข้อมูลได้ ลองรีเฟรชอีกครั้ง');
     discoveryState.items = items;
     discoveryState.moreCount = 0;
     saveCityEntry(city, items, stamp, 0);
@@ -425,20 +489,9 @@ async function loadMoreDiscovery(groupId) {
     const seen = new Set(existingTitles.map((title) => title.toLowerCase().trim()));
     const matchesGroup = (item) => discoveryGroupIdFor(item) === groupId;
     const newItems = raw
-      .filter((item) => item.title && !seen.has(String(item.title).toLowerCase().trim()) && matchesGroup(item))
+      .filter((item) => item.title && !seen.has(String(item.title).toLowerCase().trim()) && matchesGroup(item) && isVerifiedAvailable(item))
       .slice(0, 8)
-      .map((item, index) => ({
-        id: 'sug_' + stamp + '_' + index,
-        title: item.title || 'กิจกรรมแนะนำ',
-        category: item.category || 'แนะนำ',
-        city: item.city || city,
-        area: item.area || '',
-        description: item.description || '',
-        best_time: item.best_time || '',
-        image_query: item.image_query || item.title || city,
-        map_query: item.map_query || item.title || city,
-        added: false
-      }));
+      .map((item, index) => normalizeDiscoveryItem(item, index, city, stamp));
     discoveryState.moreCount = (discoveryState.moreCount || 0) + 1;
     if (!newItems.length) {
       showToast('ยังไม่มีคำแนะนำเพิ่มเติมตอนนี้');
@@ -621,13 +674,13 @@ function isShoppingOrFoodItem(item) {
 
 function isAnimeItem(item) {
   const text = [item.category, item.title].join(' ');
-  return /อนิเมะ|อนิเม|มังงะ|การ์ตูน|โอตาคุ|คอสเพลย์|ฟิกเกอร์|กาชาปอง|เมดคาเฟ่|เกมเซ็นเตอร์|anime|manga|otaku|cosplay|figure|gashapon|gacha|doujin|arcade|maid caf|akihabara|nakano broadway|animate|pok[eé]mon|ghibli|jump shop/i.test(text);
+  return /อนิเมะ|อนิเม|มังงะ|การ์ตูน|โอตาคุ|คอสเพลย์|ฟิกเกอร์|กาชาปอง|เมดคาเฟ่|เกมเซ็นเตอร์|คอลแลบ|ป็อปอัพ|anime|manga|otaku|cosplay|figure|gashapon|gacha|doujin|arcade|maid caf|collab|collaboration|pop.?up|sega|gigo|bandai namco|capcom|nintendo|akihabara|nakano broadway|animate|pok[eé]mon|ghibli|jump shop/i.test(text);
 }
 
 // Order matters: an anime figure shop matches the shopping regex too, so anime is tested first and
 // every item lands in exactly one section. The last group is the catch-all.
 const DISCOVERY_GROUPS = [
-  { id: 'anime', title: 'อนิเมะ & โอตาคุแนะนำ', match: isAnimeItem },
+  { id: 'anime', title: 'เกม อนิเมะ & คอลแลบ', match: isAnimeItem },
   { id: 'shop', title: 'ช้อปปิ้ง & ของกินแนะนำ', match: isShoppingOrFoodItem },
   { id: 'other', title: 'เทศกาลและธรรมชาติแนะนำ', soloTitle: 'กิจกรรมแนะนำ', match: () => true }
 ];
@@ -636,15 +689,23 @@ function discoveryGroupIdFor(item) {
   return DISCOVERY_GROUPS.find((group) => group.match(item)).id;
 }
 
+function discoveryAvailabilityLabel(item) {
+  const verified = item.verified_on || isoDate(japanToday());
+  if (item.availability_status === 'upcoming') return `กำลังจะจัด ${item.start_date || ''}–${item.end_date || ''}`;
+  if (item.end_date) return `เปิดถึง ${item.end_date} · ตรวจ ${verified}`;
+  return `เปิดอยู่ · ตรวจ ${verified}`;
+}
+
 function discoveryCardMarkup(item) {
   return `
     <article class="discovery-card">
-      <div class="discovery-card__media" data-img-place="${esc(item.map_query || item.title || '')}" data-img="${esc(imageUrlFor(item.image_query))}" data-img-fallback="${esc(fallbackImageUrlFor(item.image_query))}">
+      <div class="discovery-card__media" data-img-place="${esc(item.map_query || item.title || '')}">
         <span class="discovery-card__tag">${esc(item.category)}</span>
       </div>
       <div class="discovery-card__body">
         <h3>${esc(item.title)}</h3>
         <p class="discovery-card__meta">${esc([item.area, item.best_time].filter(Boolean).join(' · '))}</p>
+        <div class="discovery-card__verified"><span>✓ ${esc(discoveryAvailabilityLabel(item))}</span><button data-url="${safeUrl(item.source_url)}">ที่มา ↗</button></div>
         <p class="discovery-card__desc">${esc(item.description)}</p>
         <div class="discovery-card__actions">
           <button class="discovery-card__map" data-url="${safeUrl(mapUrlForSuggestion(item))}">แผนที่</button>
@@ -717,10 +778,10 @@ function renderDiscovery() {
     <header class="simple-header"><div><p class="eyebrow">JAPAN 2026 · AI</p><h1 id="discovery-title">ค้นพบ</h1></div>
       ${key ? `<button class="icon-button" data-refresh-discovery aria-label="รีเฟรช"${discoveryState.loading ? ' aria-busy="true"' : ''}>${discoveryState.loading ? '◌' : '↻'}</button>` : ''}
     </header>
-    <p class="discovery-subtitle">${discoveryState.useMyLocation ? `กิจกรรมแนะนำโดย AI ใกล้ตำแหน่งของคุณ (ใกล้ ${esc(city || '')} ที่สุด)` : `กิจกรรมแนะนำโดย AI ใกล้ ${esc(city || '')}`}</p>
+    <p class="discovery-subtitle">${discoveryState.useMyLocation ? `กิจกรรมใกล้ตำแหน่งคุณ (ใกล้ ${esc(city || '')} ที่สุด)` : `กิจกรรมใกล้ ${esc(city || '')}`} · ตรวจข้อมูลสด ${esc(isoDate(japanToday()))}</p>
     ${key ? `<div class="filter-row">
-      <button class="${discoveryState.useMyLocation ? 'active' : ''}" data-discovery-near-me>📍 ใกล้ฉัน</button>
-      ${cities.map((c) => `<button class="${!discoveryState.useMyLocation && city === c ? 'active' : ''}" data-discovery-city="${c}">${c}</button>`).join('')}
+      <button class="${discoveryState.useMyLocation ? 'active' : ''}" data-discovery-near-me aria-pressed="${discoveryState.useMyLocation}">📍 ใกล้ฉัน</button>
+      ${cities.map((c) => `<button class="${!discoveryState.useMyLocation && city === c ? 'active' : ''}" data-discovery-city="${c}" aria-pressed="${!discoveryState.useMyLocation && city === c}">${c}</button>`).join('')}
     </div>` : ''}
     ${!key ? geminiSetupCard() : discoveryState.loading ? discoveryLoadingMarkup() : discoveryState.error ? discoveryErrorMarkup() : discoveryCarouselMarkup()}
   `;
@@ -751,7 +812,7 @@ function discoveryMiniCard() {
   return `
     <article class="mini-card discover-card" data-tab="discovery">
       <div class="discover-card__carousel">
-        ${items.map((item, index) => `<span class="discover-card__slide" data-img="${esc(imageUrlFor(item.image_query))}" data-img-fallback="${esc(fallbackImageUrlFor(item.image_query))}" style="animation-delay:${index * -3.4}s"></span>`).join('')}
+        ${items.map((item, index) => `<span class="discover-card__slide" data-img-place="${esc(item.map_query || item.title || '')}" style="animation-delay:${index * -3.4}s"></span>`).join('')}
         <div class="discover-card__overlay">
           <span class="status warning">✦ AI แนะนำ</span>
           ${items.length > 1 ? `<span class="discover-card__dots">${items.map(() => '•').join('')}</span>` : ''}

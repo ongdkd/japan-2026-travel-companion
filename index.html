@@ -22,7 +22,7 @@
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
   </head>
   <body>
-    <main class="app-shell" aria-live="polite">
+    <main class="app-shell">
       <section class="view active" id="today-view" aria-labelledby="today-title"></section>
       <section class="view" id="plan-view" aria-labelledby="plan-title"></section>
       <section class="view" id="discovery-view" aria-labelledby="discovery-title"></section>
@@ -38,12 +38,12 @@
         <div id="detail-content"></div>
       </section>
       <nav class="bottom-nav" aria-label="เมนูหลัก">
-        <button class="active" data-tab="today"><span>⌂</span><b>วันนี้</b></button>
-        <button data-tab="plan"><span>≡</span><b>แผน</b></button>
-        <button data-tab="discovery"><span>✦</span><b>ค้นพบ</b></button>
-        <button data-tab="map"><span>⌖</span><b>แผนที่</b></button>
-        <button data-tab="saved"><span>▤</span><b>การจอง</b><i></i></button>
-        <button data-tab="more"><span>•••</span><b>เพิ่มเติม</b></button>
+        <button class="active" data-tab="today" aria-label="วันนี้" aria-current="page"><span aria-hidden="true">⌂</span><b>วันนี้</b></button>
+        <button data-tab="plan" aria-label="แผนการเดินทาง"><span aria-hidden="true">≡</span><b>แผน</b></button>
+        <button data-tab="discovery" aria-label="ค้นพบสถานที่และกิจกรรม"><span aria-hidden="true">✦</span><b>ค้นพบ</b></button>
+        <button data-tab="map" aria-label="แผนที่"><span aria-hidden="true">⌖</span><b>แผนที่</b></button>
+        <button data-tab="saved" aria-label="การจอง"><span aria-hidden="true">▤</span><b>การจอง</b><i aria-hidden="true"></i></button>
+        <button data-tab="more" aria-label="เพิ่มเติม"><span aria-hidden="true">•••</span><b>เพิ่มเติม</b></button>
       </nav>
       <dialog class="plan-editor" id="plan-editor" aria-labelledby="plan-editor-title">
         <form id="plan-editor-form">
@@ -63,8 +63,9 @@
         <form id="quick-link-form">
           <header><div><p class="eyebrow">SMART SAVE</p><h2 id="quick-link-title">เพิ่มจากลิงก์</h2></div><button type="button" data-close-quick-link aria-label="ปิด">×</button></header>
           <input type="hidden" name="Kind" value="food" />
-          <p class="editor-help">วางลิงก์ Google Maps, TikTok, YouTube หรือ Instagram แอปจะเติมข้อมูลที่ตรวจพบและบันทึกลง Google Sheets ให้</p>
-          <label>ลิงก์<input name="URL" type="url" inputmode="url" placeholder="https://…" required /></label>
+          <p class="editor-help" id="quick-link-help">วางลิงก์ Google Maps, TikTok, YouTube หรือ Instagram แอปจะเติมข้อมูลที่ตรวจพบและบันทึกลง Google Sheets ให้</p>
+          <label><span id="quick-link-url-label">ลิงก์</span><input name="URL" type="url" inputmode="url" placeholder="https://…" aria-describedby="quick-link-help" /></label>
+          <label data-place-name-field hidden>ชื่อร้านหรือสถานที่<input name="PlaceName" placeholder="เช่น GiGO Dotonbori" autocomplete="off" aria-describedby="quick-link-help" /></label>
           <div class="link-detection" id="link-detection" aria-live="polite"><span>⌕</span><div><strong>พร้อมตรวจลิงก์</strong><p>ระบบจะระบุแพลตฟอร์ม ชื่อ พื้นที่ และพิกัดเท่าที่ลิงก์มีให้</p></div></div>
           <div class="editor-actions"><button type="button" data-close-quick-link>ยกเลิก</button><button class="save-link" type="submit">ตรวจและเพิ่ม</button></div>
         </form>
