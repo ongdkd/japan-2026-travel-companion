@@ -8,8 +8,8 @@
   const TOKEN_KEY = 'japan2026.googleToken.write.v2';
   const ITINERARY_SHEET = '02_Daily Itinerary';
   const QUICK_LINK_SHEETS = {
-    food: { title: '08_Food', id: 'Food_ID', prefix: 'FOOD' },
-    videos: { title: '09_Video & Social Links', id: 'Video_ID', prefix: 'VIDEO' }
+    food: { title: '08_Food', id: 'Food_ID', prefix: 'FOOD', defaultStatus: 'Suggested' },
+    videos: { title: '09_Video & Social Links', id: 'Video_ID', prefix: 'VIDEO', defaultPriority: 'Reference' }
   };
   const SHEETS = [
     ['itinerary', '02_Daily Itinerary'],
@@ -351,6 +351,8 @@
     const idIndex = grid.headers.indexOf(config.id);
     if (idIndex < 0) throw new Error('ไม่พบคอลัมน์ ' + config.id);
     const id = nextRecordId(grid.rows, idIndex, config.prefix);
+    const priority = detected.priority || config.defaultPriority || '';
+    const status = detected.status || config.defaultStatus || '';
     const aliases = {
       Food_ID: id, Video_ID: id,
       Place_Name: detected.name, Place: detected.name, Name: detected.name, Title: detected.name,
@@ -367,7 +369,7 @@
       Google_Maps_URL: kind === 'food' ? detected.url : detected.googleMapsUrl,
       Related_Place_ID: detected.relatedPlaceId,
       Note: detected.note, Notes: detected.note,
-      Priority: detected.priority || 'Saved', Status: detected.status || 'Saved',
+      Priority: priority, Status: status,
       Added_At: new Date().toISOString(), Created_At: new Date().toISOString()
     };
     // The exact header names above are a guess at what the real sheet calls each column — when a
@@ -395,8 +397,8 @@
       if (/^lon|^lng|longitude/.test(key)) return detected.longitude;
       if (/related/.test(key)) return detected.relatedPlaceId;
       if (/note|หมายเหตุ/.test(key)) return detected.note;
-      if (/priority/.test(key)) return detected.priority || 'Saved';
-      if (/status|สถานะ/.test(key)) return detected.status || 'Saved';
+      if (/priority/.test(key)) return priority;
+      if (/status|สถานะ/.test(key)) return status;
       if (/added|created|date|time|เวลา|วันที่/.test(key)) return new Date().toISOString();
       return '';
     }

@@ -1622,7 +1622,8 @@ async function analyzeSharedLink(rawUrl, kind) {
     openingHours: place?.openingHours || geocoded?.openingHours || '',
     priceRange: place?.priceRange || '', rating: place?.rating || '',
     googleMapsUrl: existingPlace?.Google_Maps_URL || '', relatedPlaceId: existingPlace?._id || '',
-    priority: 'Saved', status: 'Saved',
+    priority: kind === 'videos' ? 'Reference' : '',
+    status: kind === 'food' ? 'Suggested' : '',
     thumbnailUrl: meta.thumbnail_url || geocoded?.image || '',
     note: `เพิ่มจาก ${platform} โดยอัตโนมัติ${meta.author_name ? ' · ' + meta.author_name : ''}`
   };
