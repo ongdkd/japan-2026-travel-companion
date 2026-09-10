@@ -1,4 +1,4 @@
-const CACHE = 'japan-2026-v9';
+const CACHE = 'japan-2026-v10';
 const APP_SHELL = [
   './',
   './index.html',
