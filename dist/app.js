@@ -18,7 +18,12 @@ const state = {
 
 const views = [...document.querySelectorAll('.view')];
 const navButtons = [...document.querySelectorAll('.bottom-nav [data-tab]')];
-navButtons.forEach((button) => button.addEventListener('click', () => showView(button.dataset.tab)));
+function activateNavButton(button) {
+  showView(button.dataset.tab);
+}
+navButtons.forEach((button) => {
+  button.addEventListener('click', () => activateNavButton(button));
+});
 const detailView = document.querySelector('#detail-view');
 const detailContent = document.querySelector('#detail-content');
 const toast = document.querySelector('.toast');
@@ -1624,10 +1629,7 @@ function showView(name) {
     if (active) button.setAttribute('aria-current', 'page');
     else button.removeAttribute('aria-current');
   });
-  if (name === 'map') setTimeout(() => {
-    state.map?.invalidateSize();
-    if (!state.userLocation && !state.mapLocateAttempted) requestMyLocation(true);
-  }, 80);
+  if (name === 'map') setTimeout(() => state.map?.invalidateSize(), 80);
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
