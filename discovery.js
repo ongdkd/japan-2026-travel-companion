@@ -8,21 +8,20 @@
 
 const GEMINI_KEY_STORAGE = 'japan2026.geminiKey';
 const GEMINI_MODEL_STORAGE = 'japan2026.geminiModel';
-const DISCOVERY_CACHE_STORAGE = 'japan2026.discovery.v2';
+const DISCOVERY_CACHE_STORAGE = 'japan2026.discovery.v3';
 const PLACE_IMAGE_CACHE_STORAGE = 'japan2026.discoveryPlaceImages.v1';
-// Google renames/retires "flash" model ids fairly often. Try the newest first, then fall back
-// to older ones automatically — whichever one actually works gets remembered so later calls
-// go straight to it instead of re-probing every time.
+// Google renames/retires "flash" model ids fairly often. Start with the free model that has the
+// largest daily quota, then fall back to the other available models automatically.
 // Confirmed against the account's own AI Studio quota dashboard: these three are real, separate
 // models with independent RPM/RPD quota (unlike a "-latest" alias, which may just point at
 // whichever of these is already exhausted). gemini-2.5-flash is retired for new users — never
 // add it back, Google returns a hard "no longer available" error for it now.
-const GEMINI_MODEL_CANDIDATES = ['gemini-3.8-flash', 'gemini-3.5-flash', 'gemini-3.1-flash-lite'];
-const DISCOVERY_CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
+const GEMINI_MODEL_CANDIDATES = ['gemini-3.1-flash-lite', 'gemini-3.5-flash', 'gemini-3.8-flash'];
+const DISCOVERY_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 const PLACE_IMAGE_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
-// Reaching the end of a carousel fetches one more batch automatically — capped per city so an
-// idle finger bouncing at the edge can't quietly burn through the whole free Gemini quota.
-const MAX_DISCOVERY_LOAD_MORE = 2;
+// Free-tier reliability matters more than endless cards. One explicit city refresh is one API
+// request; scrolling never spends quota in the background.
+const MAX_DISCOVERY_LOAD_MORE = 0;
 
 const discoveryState = {
   city: null,
@@ -282,29 +281,29 @@ function buildDiscoveryPrompt(city, options = {}) {
     `วันนี้ตามเวลาญี่ปุ่นคือ ${today}`,
     `ทริป: ${trip.name || 'Japan 2026'} ช่วงวันที่ ${tripStart} ถึง ${tripEnd}`,
     `กำลังอยู่ที่หรือวางแผนอยู่ใกล้เมือง: ${city}, ประเทศญี่ปุ่น`,
-    'ใช้ Google Search ตรวจข้อมูลล่าสุดของทุกรายการก่อนตอบ และใส่ URL แหล่งข้อมูลที่ยืนยันวันเปิด/วันจัดจริง',
-    `สถานที่ถาวรต้องยังเปิดดำเนินการ ณ ${today}; อีเวนต์ ป็อปอัพ คาเฟ่คอลแลบ หรือนิทรรศการชั่วคราวต้องยังไม่จบ และต้องมีช่วงวันที่ทับกับ ${tripStart} ถึง ${tripEnd}`,
-    'ถ้ายืนยันสถานะหรือวันที่จากแหล่งข้อมูลไม่ได้ ให้ตัดรายการนั้นออก ห้ามเดา'
+    'คุณไม่มีสิทธิ์ค้นเว็บสดในคำขอนี้ ห้ามอ้างว่าได้ตรวจ Google Search หรือยืนยันสถานะล่าสุดแล้ว',
+    'เน้นสถานที่ถาวรและย่านที่เป็นที่รู้จักซึ่งมีโอกาสสูงว่ายังเปิดอยู่ ห้ามแต่งชื่ออีเวนต์ URL หรือวันที่เฉพาะเจาะจง',
+    `สำหรับอีเวนต์ ป็อปอัพ คาเฟ่คอลแลบ หรือนิทรรศการ ให้แนะนำสถานที่หรือผู้จัดที่ควรค้นหาสำหรับช่วง ${tripStart} ถึง ${tripEnd} และบอกให้ผู้ใช้ตรวจสอบอีกครั้งก่อนเดินทาง`
   ];
   if (focus === 'anime') {
-    lines.push('รอบนี้ขอเฉพาะสายอนิเมะ/มังงะ/เกมและคอลแลบ ประมาณ 8 รายการ โดยให้ความสำคัญกับอาคารเกม GiGO (เดิม SEGA), SEGA-related arcade, Bandai Namco, Capcom/Nintendo, ร้านฟิกเกอร์/กาชาปอง, character cafe, collaboration cafe, pop-up store, นิทรรศการ และอีเวนต์คอลแลบที่กำลังจัดหรือจะจัดตรงกับวันทริป (ไม่เอาร้านอาหารทั่วไป ห้างทั่วไป เทศกาลทั่วไป หรือธรรมชาติ)');
+    lines.push('รอบนี้ขอเฉพาะสายอนิเมะ/มังงะ/เกมและคอลแลบ ประมาณ 8 รายการ โดยให้ความสำคัญกับสถานที่ถาวร เช่น GiGO (เดิม SEGA), Bandai Namco, Capcom/Nintendo, ร้านฟิกเกอร์/กาชาปอง และสถานที่ที่มักจัด character cafe, collaboration cafe, pop-up store หรือนิทรรศการ เพื่อให้ผู้ใช้กดค้นสถานะล่าสุดเอง (ไม่เอาร้านอาหารทั่วไป ห้างทั่วไป เทศกาลทั่วไป หรือธรรมชาติ)');
   } else if (focus === 'shop') {
-    lines.push('รอบนี้ขอเฉพาะร้านอาหาร คาเฟ่ ของกินที่กำลังฮิต ห้างสรรพสินค้า ตลาด หรือแหล่งช้อปปิ้งสายเทรนด์เท่านั้น (ไม่เอาเทศกาล ธรรมชาติ หรือที่สายอนิเมะ) ประมาณ 8 รายการ');
+    lines.push('รอบนี้ขอเฉพาะร้านอาหาร คาเฟ่ ของกิน ห้างสรรพสินค้า ตลาด หรือแหล่งช้อปปิ้งที่เป็นที่รู้จักและควรลอง (ไม่เอาเทศกาล ธรรมชาติ หรือที่สายอนิเมะ) ประมาณ 8 รายการ');
   } else if (focus === 'other') {
     lines.push('รอบนี้ขอเฉพาะเทศกาล ธรรมชาติ หรือสถานที่ท่องเที่ยวอื่น ๆ ที่มีมุมถ่ายรูปเก๋เท่านั้น (ไม่เอาร้านอาหาร คาเฟ่ ห้าง ตลาด หรือที่สายอนิเมะ) ประมาณ 8 รายการ');
   } else {
-    lines.push('ช่วยแนะนำกิจกรรม สถานที่ เทศกาล หรืออีเวนต์ที่น่าสนใจจริงและเกี่ยวข้องกับช่วงเวลานี้ ใกล้เมืองนี้ ประมาณ 12 รายการ');
+    lines.push('ช่วยแนะนำสถานที่ถาวรและจุดที่ควรค้นกิจกรรมเพิ่มเติมใกล้เมืองนี้ ประมาณ 12 รายการ');
   }
   lines.push('เลือกที่ที่ถูกจริตสาย Gen Z: ถ่ายรูปลงโซเชียลได้สวย (aesthetic/instagrammable), กำลังเป็นกระแสใน TikTok/IG, คาเฟ่ธีมเก๋ ๆ, ร้านของกินที่กำลังไวรัล, ตลาดนัด/ตลาดกลางคืนสายชิล, ร้านมือสอง/วินเทจ, ป็อปอัพสโตร์, สตรีทอาร์ต, จุดถ่ายรูปลับที่คนไทยอาจไม่รู้จัก — เน้นสิ่งเหล่านี้มากกว่าสถานที่ท่องเที่ยวแบบดั้งเดิมที่ใคร ๆ ก็รู้จัก');
   if (!focus) {
-    lines.push('ต้องมีอย่างน้อย 3 รายการเป็นร้านอาหาร คาเฟ่ หรือของกินที่กำลังฮิต, อย่างน้อย 2 รายการเป็นห้างสรรพสินค้า ตลาด หรือแหล่งช้อปปิ้งสายเทรนด์ และอย่างน้อย 3 รายการเป็นสายอนิเมะ/มังงะ/เกม/คอลแลบ โดยให้ค้น GiGO (เดิม SEGA), เกมเซ็นเตอร์, character cafe, collaboration cafe, นิทรรศการหรือป็อปอัพที่ตรงวันทริป ที่เหลือเป็นเทศกาล ธรรมชาติ หรือสถานที่ท่องเที่ยวอื่น ๆ ที่มีมุมถ่ายรูปเก๋');
+    lines.push('ต้องมีอย่างน้อย 3 รายการเป็นร้านอาหาร คาเฟ่ หรือของกิน, อย่างน้อย 2 รายการเป็นห้าง ตลาด หรือแหล่งช้อปปิ้ง และอย่างน้อย 3 รายการเป็นสายอนิเมะ/มังงะ/เกม โดยเน้น GiGO (เดิม SEGA), เกมเซ็นเตอร์ และสถานที่ที่มักจัด character cafe, collaboration cafe, นิทรรศการหรือป็อปอัพ ที่เหลือเป็นธรรมชาติหรือสถานที่ถ่ายรูป');
   }
-  lines.push('เน้นสิ่งที่เหมาะกับช่วงเดือนตุลาคม เช่น เทศกาลตามฤดูกาล ใบไม้เปลี่ยนสี ตลาดกลางคืน นิทรรศการ หรือจุดท่องเที่ยวที่คนไทยอาจไม่รู้จักมาก่อน');
+  lines.push('เน้นสิ่งที่โดยทั่วไปเหมาะกับช่วงเดือนตุลาคม เช่น บรรยากาศฤดูใบไม้ร่วง ตลาดกลางคืน หรือจุดท่องเที่ยวที่คนไทยอาจไม่รู้จักมาก่อน โดยไม่แต่งชื่อเทศกาลหรือวันที่');
   lines.push('เขียน description ด้วยโทนเป็นกันเองแบบเพื่อนคุยกัน สนุก กระชับ ใช้สแลงไทยร่วมสมัยได้พอประมาณ (ไม่ทางการ ไม่เวิ่นเว้อ) แต่ยังให้ข้อมูลที่เป็นประโยชน์จริง');
   if (excludeTitles && excludeTitles.length) {
     lines.push('ห้ามแนะนำที่ซ้ำหรือคล้ายกับรายการที่เคยแนะนำไปแล้วนี้ ขอเป็นที่ใหม่ล้วน: ' + excludeTitles.join(', '));
   }
-  lines.push('ตอบเป็น JSON array เท่านั้น (ห้ามมีข้อความอื่นนอกเหนือ JSON) แต่ละรายการมีฟิลด์: title, category (หมวดสั้น ๆ ภาษาไทย เช่น เทศกาล, ธรรมชาติ, ช้อปปิ้ง, อาหาร, อนิเมะ, คอลแลบ), city, area, description (ภาษาไทย 1-2 ประโยค), best_time, image_query (คำค้นชื่อสถานที่ภาษาอังกฤษ), map_query (ชื่อสถานที่ภาษาอังกฤษแบบเจาะจงสำหรับ Google Maps), availability_status (permanent, open_now หรือ upcoming เท่านั้น), start_date (YYYY-MM-DD หรือค่าว่างสำหรับสถานที่ถาวร), end_date (YYYY-MM-DD หรือค่าว่างสำหรับสถานที่ถาวร), source_url (URL หน้าเว็บที่ยืนยันสถานะ/วันที่โดยตรง), verification_note (สรุปสั้น ๆ ภาษาไทยว่าเปิดอยู่หรือจัดวันไหน)');
+  lines.push('ตอบเป็น JSON array เท่านั้น (ห้ามมีข้อความอื่นนอกเหนือ JSON) แต่ละรายการมีฟิลด์: title, category (หมวดสั้น ๆ ภาษาไทย เช่น ธรรมชาติ, ช้อปปิ้ง, อาหาร, อนิเมะ, คอลแลบ), city, area, description (ภาษาไทย 1-2 ประโยค), best_time, image_query (คำค้นชื่อสถานที่ภาษาอังกฤษ), map_query (ชื่อสถานที่ภาษาอังกฤษแบบเจาะจงสำหรับ Google Maps), availability_status (permanent หรือ needs_check เท่านั้น)');
   return lines.join('\n');
 }
 
@@ -331,8 +330,8 @@ async function callGeminiModel(prompt, key, model) {
   const endpoint = 'https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent?key=' + encodeURIComponent(key);
   const body = {
     contents: [{ role: 'user', parts: [{ text: prompt }] }],
-    tools: [{ google_search: {} }],
     generationConfig: {
+      temperature: 0.2,
       responseMimeType: 'application/json',
       responseSchema: {
         type: 'ARRAY',
@@ -347,22 +346,29 @@ async function callGeminiModel(prompt, key, model) {
             best_time: { type: 'STRING' },
             image_query: { type: 'STRING' },
             map_query: { type: 'STRING' },
-            availability_status: { type: 'STRING' },
-            start_date: { type: 'STRING' },
-            end_date: { type: 'STRING' },
-            source_url: { type: 'STRING' },
-            verification_note: { type: 'STRING' }
+            availability_status: { type: 'STRING' }
           },
-          required: ['title', 'category', 'city', 'description', 'availability_status', 'source_url', 'verification_note']
+          required: ['title', 'category', 'city', 'description', 'availability_status']
         }
       }
     }
   };
-  const response = await fetch(endpoint, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body)
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 20000);
+  let response;
+  try {
+    response = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: controller.signal
+    });
+  } catch (error) {
+    if (error.name === 'AbortError') throw new Error('Gemini ใช้เวลาตอบนานเกินไป');
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
   if (!response.ok) {
     const detail = await response.json().catch(() => null);
     const message = detail?.error?.message || ('Gemini ตอบกลับรหัส ' + response.status);
@@ -375,16 +381,14 @@ async function callGeminiModel(prompt, key, model) {
   return Array.isArray(parsed) ? parsed : [];
 }
 
-// Google renames/retires "flash" model ids often (we've hit this twice already), and any single
-// model can also get temporarily overloaded ("experiencing high demand"). Try whichever model
-// last worked first, then walk the candidate list — only for "model unavailable" or "overloaded"
-// shaped errors, so a bad key or a real quota-on-your-account error still surfaces immediately
-// instead of being masked by three retries.
+// Google renames/retires model ids often, and any model can be temporarily overloaded. Always
+// try high-quota Flash Lite first, then the last working fallback and the remaining candidates.
 async function callGemini(prompt) {
   const key = getGeminiKey();
   if (!key) throw new Error('ยังไม่ได้เชื่อม Gemini API Key');
   const remembered = getRememberedModel();
-  const order = [remembered, ...GEMINI_MODEL_CANDIDATES].filter((model, index, all) => model && all.indexOf(model) === index);
+  const order = [GEMINI_MODEL_CANDIDATES[0], remembered, ...GEMINI_MODEL_CANDIDATES.slice(1)]
+    .filter((model, index, all) => model && all.indexOf(model) === index);
   let lastError;
   for (const model of order) {
     try {
@@ -404,26 +408,10 @@ async function callGemini(prompt) {
   throw lastError;
 }
 
-function discoveryIsoDate(value) {
-  const text = String(value || '').trim().slice(0, 10);
-  return /^\d{4}-\d{2}-\d{2}$/.test(text) && !Number.isNaN(Date.parse(text + 'T00:00:00Z')) ? text : '';
-}
-
-function isVerifiedAvailable(item) {
+function isUsableDiscoveryItem(item) {
+  if (!item || !String(item.title || '').trim()) return false;
   const status = String(item.availability_status || '').toLowerCase().trim();
-  if (!['permanent', 'open_now', 'upcoming'].includes(status)) return false;
-  if (safeUrl(item.source_url) === '#') return false;
-  const today = isoDate(japanToday());
-  const tripStart = String(DATA.trip?.startDate || today).slice(0, 10);
-  const tripEnd = String(DATA.trip?.endDate || tripStart).slice(0, 10);
-  const start = discoveryIsoDate(item.start_date);
-  const end = discoveryIsoDate(item.end_date);
-  if (end && end < today) return false;
-  const text = [item.title, item.category, item.description, item.verification_note].join(' ');
-  const timed = status === 'upcoming' || /event|collab|collaboration|pop.?up|temporary|อีเวนต์|คอลแลบ|ป็อปอัพ|นิทรรศการ/i.test(text);
-  if (timed && (!start || !end)) return false;
-  if (timed && (start > tripEnd || end < tripStart)) return false;
-  return true;
+  return ['permanent', 'needs_check'].includes(status);
 }
 
 function normalizeDiscoveryItem(item, index, city, stamp) {
@@ -438,17 +426,13 @@ function normalizeDiscoveryItem(item, index, city, stamp) {
     image_query: item.image_query || item.title || city,
     map_query: item.map_query || item.title || city,
     availability_status: item.availability_status || '',
-    start_date: discoveryIsoDate(item.start_date),
-    end_date: discoveryIsoDate(item.end_date),
-    source_url: safeUrl(item.source_url),
-    verification_note: item.verification_note || '',
-    verified_on: isoDate(japanToday()),
     added: false
   };
 }
 
 async function fetchDiscovery(forceCity) {
   const city = forceCity || activeDiscoveryCity();
+  const cached = loadCityEntry(city);
   discoveryState.loading = true;
   discoveryState.error = null;
   discoveryState.city = city;
@@ -456,14 +440,21 @@ async function fetchDiscovery(forceCity) {
   try {
     const raw = await callGemini(buildDiscoveryPrompt(city));
     const stamp = Date.now();
-    const items = raw.filter(isVerifiedAvailable).slice(0, 12)
+    const items = raw.filter(isUsableDiscoveryItem).slice(0, 12)
       .map((item, index) => normalizeDiscoveryItem(item, index, city, stamp));
-    if (!items.length) throw new Error('ยังไม่พบสถานที่หรืออีเวนต์ที่ยืนยันวันเปิดและแหล่งข้อมูลได้ ลองรีเฟรชอีกครั้ง');
+    if (!items.length) throw new Error('ยังไม่พบคำแนะนำที่ใช้งานได้ ลองรีเฟรชอีกครั้ง');
     discoveryState.items = items;
     discoveryState.moreCount = 0;
     saveCityEntry(city, items, stamp, 0);
   } catch (error) {
-    discoveryState.error = error.message || 'ค้นหากิจกรรมไม่สำเร็จ';
+    if (cached?.items?.length) {
+      discoveryState.items = cached.items;
+      discoveryState.moreCount = cached.moreCount || 0;
+      discoveryState.error = null;
+      showToast('Gemini ยังไม่พร้อม จึงแสดงคำแนะนำที่บันทึกไว้');
+    } else {
+      discoveryState.error = error.message || 'ค้นหากิจกรรมไม่สำเร็จ';
+    }
   } finally {
     discoveryState.loading = false;
     renderDiscovery();
@@ -489,7 +480,7 @@ async function loadMoreDiscovery(groupId) {
     const seen = new Set(existingTitles.map((title) => title.toLowerCase().trim()));
     const matchesGroup = (item) => discoveryGroupIdFor(item) === groupId;
     const newItems = raw
-      .filter((item) => item.title && !seen.has(String(item.title).toLowerCase().trim()) && matchesGroup(item) && isVerifiedAvailable(item))
+      .filter((item) => item.title && !seen.has(String(item.title).toLowerCase().trim()) && matchesGroup(item) && isUsableDiscoveryItem(item))
       .slice(0, 8)
       .map((item, index) => normalizeDiscoveryItem(item, index, city, stamp));
     discoveryState.moreCount = (discoveryState.moreCount || 0) + 1;
@@ -650,8 +641,8 @@ function discoveryErrorMarkup() {
     title = 'โมเดล AI กำลังมีคนใช้เยอะ';
     hint = 'ระบบลองสลับไปโมเดลสำรองให้อัตโนมัติแล้ว แต่ตอนนี้ทุกโมเดลไม่ว่างพร้อมกัน มักเป็นแค่ชั่วคราว ลองกด "ลองอีกครั้ง" อีกสักครู่';
   } else if (quotaExceeded) {
-    title = 'ใช้โควต้าฟรีของ Gemini ครบแล้ว';
-    hint = 'ระบบลองสลับโมเดลสำรองให้แล้วแต่โควต้าฟรีเต็มทุกตัวในตอนนี้ โควต้าฟรีจะรีเซ็ตให้ใหม่ (ปกติทุกวัน/ทุกนาทีตามชนิดโควต้า) ลองใหม่อีกครั้งภายหลัง';
+    title = 'แตะลิมิต Gemini ฟรีชั่วคราว';
+    hint = 'อาจเป็นลิมิตต่อนาทีหรือต่อวัน ระบบลองโมเดลสำรองแล้ว หากมีข้อมูลเดิมแอปจะแสดงจากแคชให้อัตโนมัติ ลองใหม่ภายหลัง';
   }
   return `
     <div class="empty-panel">
@@ -689,11 +680,14 @@ function discoveryGroupIdFor(item) {
   return DISCOVERY_GROUPS.find((group) => group.match(item)).id;
 }
 
+function verificationUrlFor(item) {
+  const query = [item.title, item.area, item.city, 'official opening hours event'].filter(Boolean).join(' ');
+  return 'https://www.google.com/search?q=' + encodeURIComponent(query);
+}
+
 function discoveryAvailabilityLabel(item) {
-  const verified = item.verified_on || isoDate(japanToday());
-  if (item.availability_status === 'upcoming') return `กำลังจะจัด ${item.start_date || ''}–${item.end_date || ''}`;
-  if (item.end_date) return `เปิดถึง ${item.end_date} · ตรวจ ${verified}`;
-  return `เปิดอยู่ · ตรวจ ${verified}`;
+  if (item.availability_status === 'permanent') return 'สถานที่ถาวร · เช็กสถานะวันนี้';
+  return 'AI แนะนำ · เช็กสถานะวันนี้';
 }
 
 function discoveryCardMarkup(item) {
@@ -705,7 +699,7 @@ function discoveryCardMarkup(item) {
       <div class="discovery-card__body">
         <h3>${esc(item.title)}</h3>
         <p class="discovery-card__meta">${esc([item.area, item.best_time].filter(Boolean).join(' · '))}</p>
-        <div class="discovery-card__verified"><span>✓ ${esc(discoveryAvailabilityLabel(item))}</span><button data-url="${safeUrl(item.source_url)}">ที่มา ↗</button></div>
+        <div class="discovery-card__verified"><span>○ ${esc(discoveryAvailabilityLabel(item))}</span><button data-url="${safeUrl(verificationUrlFor(item))}">เช็กวันนี้ ↗</button></div>
         <p class="discovery-card__desc">${esc(item.description)}</p>
         <div class="discovery-card__actions">
           <button class="discovery-card__map" data-url="${safeUrl(mapUrlForSuggestion(item))}">แผนที่</button>
@@ -778,7 +772,7 @@ function renderDiscovery() {
     <header class="simple-header"><div><p class="eyebrow">JAPAN 2026 · AI</p><h1 id="discovery-title">ค้นพบ</h1></div>
       ${key ? `<button class="icon-button" data-refresh-discovery aria-label="รีเฟรช"${discoveryState.loading ? ' aria-busy="true"' : ''}>${discoveryState.loading ? '◌' : '↻'}</button>` : ''}
     </header>
-    <p class="discovery-subtitle">${discoveryState.useMyLocation ? `กิจกรรมใกล้ตำแหน่งคุณ (ใกล้ ${esc(city || '')} ที่สุด)` : `กิจกรรมใกล้ ${esc(city || '')}`} · ตรวจข้อมูลสด ${esc(isoDate(japanToday()))}</p>
+    <p class="discovery-subtitle">${discoveryState.useMyLocation ? `กิจกรรมใกล้ตำแหน่งคุณ (ใกล้ ${esc(city || '')} ที่สุด)` : `กิจกรรมใกล้ ${esc(city || '')}`} · AI ไม่ได้ตรวจเว็บสด กรุณาเช็กก่อนเดินทาง</p>
     ${key ? `<div class="filter-row">
       <button class="${discoveryState.useMyLocation ? 'active' : ''}" data-discovery-near-me aria-pressed="${discoveryState.useMyLocation}">📍 ใกล้ฉัน</button>
       ${cities.map((c) => `<button class="${!discoveryState.useMyLocation && city === c ? 'active' : ''}" data-discovery-city="${c}" aria-pressed="${!discoveryState.useMyLocation && city === c}">${c}</button>`).join('')}
